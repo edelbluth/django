@@ -9,15 +9,18 @@ from django.db.models.fields import NOT_PROVIDED
 from django.db.transaction import atomic
 from django.db.utils import IntegrityError
 from django.test import override_settings, skipUnlessDBFeature
-from django.utils import six
 
-from .models import FoodManager, FoodQuerySet
+from .models import FoodManager, FoodQuerySet, UnicodeModel
 from .test_base import MigrationTestBase
 
 try:
     import sqlparse
 except ImportError:
     sqlparse = None
+
+
+class Mixin(object):
+    pass
 
 
 class OperationTestBase(MigrationTestBase):
@@ -47,7 +50,8 @@ class OperationTestBase(MigrationTestBase):
         operation.state_forwards(app_label, new_state)
         return project_state, new_state
 
-    def set_up_test_model(self, app_label, second_model=False, third_model=False,
+    def set_up_test_model(
+            self, app_label, second_model=False, third_model=False, multicol_index=False,
             related_model=False, mti_model=False, proxy_model=False, manager_model=False,
             unique_together=False, options=False, db_table=None, index_together=False):
         """
@@ -92,6 +96,11 @@ class OperationTestBase(MigrationTestBase):
             ],
             options=model_options,
         )]
+        if multicol_index:
+            operations.append(migrations.AddIndex(
+                "Pony",
+                models.Index(fields=["pink", "weight"], name="pony_test_idx")
+            ))
         if second_model:
             operations.append(migrations.CreateModel(
                 "Stable",
@@ -123,6 +132,7 @@ class OperationTestBase(MigrationTestBase):
                         'Pony',
                         models.CASCADE,
                         auto_created=True,
+                        parent_link=True,
                         primary_key=True,
                         to_field='id',
                         serialize=False,
@@ -198,6 +208,76 @@ class OperationTests(OperationTestBase):
         operation = migrations.CreateModel("Foo", fields=[], managers=[("objects", models.Manager())])
         definition = operation.deconstruct()
         self.assertNotIn('managers', definition[2])
+
+    def test_create_model_with_duplicate_field_name(self):
+        with self.assertRaisesMessage(ValueError, 'Found duplicate value pink in CreateModel fields argument.'):
+            migrations.CreateModel(
+                "Pony",
+                [
+                    ("id", models.AutoField(primary_key=True)),
+                    ("pink", models.TextField()),
+                    ("pink", models.IntegerField(default=1)),
+                ],
+            )
+
+    def test_create_model_with_duplicate_base(self):
+        message = 'Found duplicate value test_crmo.pony in CreateModel bases argument.'
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=("test_crmo.Pony", "test_crmo.Pony",),
+            )
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=("test_crmo.Pony", "test_crmo.pony",),
+            )
+        message = 'Found duplicate value migrations.unicodemodel in CreateModel bases argument.'
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=(UnicodeModel, UnicodeModel,),
+            )
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=(UnicodeModel, 'migrations.unicodemodel',),
+            )
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=(UnicodeModel, 'migrations.UnicodeModel',),
+            )
+        message = "Found duplicate value <class 'django.db.models.base.Model'> in CreateModel bases argument."
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=(models.Model, models.Model,),
+            )
+        message = "Found duplicate value <class 'migrations.test_operations.Mixin'> in CreateModel bases argument."
+        with self.assertRaisesMessage(ValueError, message):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                bases=(Mixin, Mixin,),
+            )
+
+    def test_create_model_with_duplicate_manager_name(self):
+        with self.assertRaisesMessage(ValueError, 'Found duplicate value objects in CreateModel managers argument.'):
+            migrations.CreateModel(
+                "Pony",
+                fields=[],
+                managers=[
+                    ("objects", models.Manager()),
+                    ("objects", models.Manager()),
+                ],
+            )
 
     def test_create_model_with_unique_after(self):
         """
@@ -583,6 +663,7 @@ class OperationTests(OperationTestBase):
 
         project_state = self.apply_operations(app_label, ProjectState(), operations=[
             migrations.CreateModel("ReflexivePony", fields=[
+                ("id", models.AutoField(primary_key=True)),
                 ("ponies", models.ManyToManyField("self")),
             ]),
         ])
@@ -596,8 +677,11 @@ class OperationTests(OperationTestBase):
     def test_rename_model_with_m2m(self):
         app_label = "test_rename_model_with_m2m"
         project_state = self.apply_operations(app_label, ProjectState(), operations=[
-            migrations.CreateModel("Rider", fields=[]),
+            migrations.CreateModel("Rider", fields=[
+                ("id", models.AutoField(primary_key=True)),
+            ]),
             migrations.CreateModel("Pony", fields=[
+                ("id", models.AutoField(primary_key=True)),
                 ("riders", models.ManyToManyField("Rider")),
             ]),
         ])
@@ -622,8 +706,11 @@ class OperationTests(OperationTestBase):
     def test_rename_m2m_target_model(self):
         app_label = "test_rename_m2m_target_model"
         project_state = self.apply_operations(app_label, ProjectState(), operations=[
-            migrations.CreateModel("Rider", fields=[]),
+            migrations.CreateModel("Rider", fields=[
+                ("id", models.AutoField(primary_key=True)),
+            ]),
             migrations.CreateModel("Pony", fields=[
+                ("id", models.AutoField(primary_key=True)),
                 ("riders", models.ManyToManyField("Rider")),
             ]),
         ])
@@ -644,6 +731,47 @@ class OperationTests(OperationTestBase):
         self.assertEqual(Pony.objects.count(), 2)
         self.assertEqual(Rider.objects.count(), 2)
         self.assertEqual(Pony._meta.get_field('riders').remote_field.through.objects.count(), 2)
+
+    def test_rename_m2m_through_model(self):
+        app_label = "test_rename_through"
+        project_state = self.apply_operations(app_label, ProjectState(), operations=[
+            migrations.CreateModel("Rider", fields=[
+                ("id", models.AutoField(primary_key=True)),
+            ]),
+            migrations.CreateModel("Pony", fields=[
+                ("id", models.AutoField(primary_key=True)),
+            ]),
+            migrations.CreateModel("PonyRider", fields=[
+                ("id", models.AutoField(primary_key=True)),
+                ("rider", models.ForeignKey("test_rename_through.Rider", models.CASCADE)),
+                ("pony", models.ForeignKey("test_rename_through.Pony", models.CASCADE)),
+            ]),
+            migrations.AddField(
+                "Pony",
+                "riders",
+                models.ManyToManyField("test_rename_through.Rider", through="test_rename_through.PonyRider"),
+            ),
+        ])
+        Pony = project_state.apps.get_model(app_label, "Pony")
+        Rider = project_state.apps.get_model(app_label, "Rider")
+        PonyRider = project_state.apps.get_model(app_label, "PonyRider")
+        pony = Pony.objects.create()
+        rider = Rider.objects.create()
+        PonyRider.objects.create(pony=pony, rider=rider)
+
+        project_state = self.apply_operations(app_label, project_state, operations=[
+            migrations.RenameModel("PonyRider", "PonyRider2"),
+        ])
+        Pony = project_state.apps.get_model(app_label, "Pony")
+        Rider = project_state.apps.get_model(app_label, "Rider")
+        PonyRider = project_state.apps.get_model(app_label, "PonyRider2")
+        pony = Pony.objects.first()
+        rider = Rider.objects.create()
+        PonyRider.objects.create(pony=pony, rider=rider)
+        self.assertEqual(Pony.objects.count(), 1)
+        self.assertEqual(Rider.objects.count(), 2)
+        self.assertEqual(PonyRider.objects.count(), 2)
+        self.assertEqual(pony.riders.count(), 2)
 
     def test_add_field(self):
         """
@@ -1026,6 +1154,13 @@ class OperationTests(OperationTestBase):
         self.assertEqual(definition[1], [])
         self.assertEqual(definition[2], {'name': "Pony", 'table': "test_almota_pony_2"})
 
+    def test_alter_model_table_none(self):
+        """
+        Tests the AlterModelTable operation if the table name is set to None.
+        """
+        operation = migrations.AlterModelTable("Pony", None)
+        self.assertEqual(operation.describe(), "Rename table for Pony to (default)")
+
     def test_alter_model_table_noop(self):
         """
         Tests the AlterModelTable operation if the table name is not changed.
@@ -1087,8 +1222,8 @@ class OperationTests(OperationTestBase):
         self.assertEqual(operation.describe(), "Alter field pink on Pony")
         new_state = project_state.clone()
         operation.state_forwards("test_alfl", new_state)
-        self.assertEqual(project_state.models["test_alfl", "pony"].get_field_by_name("pink").null, False)
-        self.assertEqual(new_state.models["test_alfl", "pony"].get_field_by_name("pink").null, True)
+        self.assertIs(project_state.models["test_alfl", "pony"].get_field_by_name("pink").null, False)
+        self.assertIs(new_state.models["test_alfl", "pony"].get_field_by_name("pink").null, True)
         # Test the database alteration
         self.assertColumnNotNull("test_alfl_pony", "pink")
         with connection.schema_editor() as editor:
@@ -1251,6 +1386,66 @@ class OperationTests(OperationTestBase):
     def test_alter_unique_together_remove(self):
         operation = migrations.AlterUniqueTogether("Pony", None)
         self.assertEqual(operation.describe(), "Alter unique_together for Pony (0 constraint(s))")
+
+    def test_add_index(self):
+        """
+        Test the AddIndex operation.
+        """
+        project_state = self.set_up_test_model("test_adin")
+        msg = (
+            "Indexes passed to AddIndex operations require a name argument. "
+            "<Index: fields='pink'> doesn't have one."
+        )
+        with self.assertRaisesMessage(ValueError, msg):
+            migrations.AddIndex("Pony", models.Index(fields=["pink"]))
+        index = models.Index(fields=["pink"], name="test_adin_pony_pink_idx")
+        operation = migrations.AddIndex("Pony", index)
+        self.assertEqual(operation.describe(), "Create index on field(s) pink of model Pony")
+        new_state = project_state.clone()
+        operation.state_forwards("test_adin", new_state)
+        # Test the database alteration
+        self.assertEqual(len(new_state.models["test_adin", "pony"].options['indexes']), 1)
+        self.assertIndexNotExists("test_adin_pony", ["pink"])
+        with connection.schema_editor() as editor:
+            operation.database_forwards("test_adin", editor, project_state, new_state)
+        self.assertIndexExists("test_adin_pony", ["pink"])
+        # And test reversal
+        with connection.schema_editor() as editor:
+            operation.database_backwards("test_adin", editor, new_state, project_state)
+        self.assertIndexNotExists("test_adin_pony", ["pink"])
+        # And deconstruction
+        definition = operation.deconstruct()
+        self.assertEqual(definition[0], "AddIndex")
+        self.assertEqual(definition[1], [])
+        self.assertEqual(definition[2], {'model_name': "Pony", 'index': index})
+
+    def test_remove_index(self):
+        """
+        Test the RemoveIndex operation.
+        """
+        project_state = self.set_up_test_model("test_rmin", multicol_index=True)
+        self.assertTableExists("test_rmin_pony")
+        self.assertIndexExists("test_rmin_pony", ["pink", "weight"])
+        operation = migrations.RemoveIndex("Pony", "pony_test_idx")
+        self.assertEqual(operation.describe(), "Remove index pony_test_idx from Pony")
+        new_state = project_state.clone()
+        operation.state_forwards("test_rmin", new_state)
+        # Test the state alteration
+        self.assertEqual(len(new_state.models["test_rmin", "pony"].options['indexes']), 0)
+        self.assertIndexExists("test_rmin_pony", ["pink", "weight"])
+        # Test the database alteration
+        with connection.schema_editor() as editor:
+            operation.database_forwards("test_rmin", editor, project_state, new_state)
+        self.assertIndexNotExists("test_rmin_pony", ["pink", "weight"])
+        # And test reversal
+        with connection.schema_editor() as editor:
+            operation.database_backwards("test_rmin", editor, new_state, project_state)
+        self.assertIndexExists("test_rmin_pony", ["pink", "weight"])
+        # And deconstruction
+        definition = operation.deconstruct()
+        self.assertEqual(definition[0], "RemoveIndex")
+        self.assertEqual(definition[1], [])
+        self.assertEqual(definition[2], {'model_name': "Pony", 'name': "pony_test_idx"})
 
     def test_alter_index_together(self):
         """
@@ -1532,6 +1727,10 @@ class OperationTests(OperationTestBase):
         self.assertEqual(definition[0], "RunSQL")
         self.assertEqual(definition[1], [])
         self.assertEqual(sorted(definition[2]), ["reverse_sql", "sql", "state_operations"])
+        # And elidable reduction
+        self.assertIs(False, operation.reduce(operation, []))
+        elidable_operation = migrations.RunSQL('SELECT 1 FROM void;', elidable=True)
+        self.assertEqual(elidable_operation.reduce(operation, []), [operation])
 
     def test_run_sql_params(self):
         """
@@ -1603,16 +1802,12 @@ class OperationTests(OperationTestBase):
         )
 
         with connection.schema_editor() as editor:
-            six.assertRaisesRegex(self, ValueError,
-                "Expected a 2-tuple but got 1",
-                operation.database_forwards,
-                "test_runsql", editor, project_state, new_state)
+            with self.assertRaisesMessage(ValueError, "Expected a 2-tuple but got 1"):
+                operation.database_forwards("test_runsql", editor, project_state, new_state)
 
         with connection.schema_editor() as editor:
-            six.assertRaisesRegex(self, ValueError,
-                "Expected a 2-tuple but got 3",
-                operation.database_backwards,
-                "test_runsql", editor, new_state, project_state)
+            with self.assertRaisesMessage(ValueError, "Expected a 2-tuple but got 3"):
+                operation.database_backwards("test_runsql", editor, new_state, project_state)
 
     def test_run_sql_noop(self):
         """
@@ -1705,6 +1900,10 @@ class OperationTests(OperationTestBase):
             operation.database_forwards("test_runpython", editor, project_state, new_state)
         self.assertEqual(project_state.apps.get_model("test_runpython", "Pony").objects.count(), 6)
         self.assertEqual(project_state.apps.get_model("test_runpython", "ShetlandPony").objects.count(), 2)
+        # And elidable reduction
+        self.assertIs(False, operation.reduce(operation, []))
+        elidable_operation = migrations.RunPython(inner_method, elidable=True)
+        self.assertEqual(elidable_operation.reduce(operation, []), [operation])
 
     def test_run_python_atomic(self):
         """
@@ -1936,7 +2135,7 @@ class OperationTests(OperationTestBase):
 
         state = new_state.clone()
         blog = state.apps.get_model("test_blog.Blog")
-        self.assertTrue(isinstance(blog._meta.pk, models.BigAutoField))
+        self.assertIsInstance(blog._meta.pk, models.BigAutoField)
 
         project_state = new_state
         new_state = new_state.clone()
@@ -2155,3 +2354,21 @@ class SwappableOperationTests(OperationTestBase):
         with connection.schema_editor() as editor:
             operation.database_backwards("test_adfligsw", editor, new_state, project_state)
         self.assertTableNotExists("test_adfligsw_pony")
+
+    @override_settings(TEST_SWAP_MODEL='migrations.SomeFakeModel')
+    def test_indexes_ignore_swapped(self):
+        """
+        Add/RemoveIndex operations ignore swapped models.
+        """
+        operation = migrations.AddIndex('Pony', models.Index(fields=['pink'], name='my_name_idx'))
+        project_state, new_state = self.make_test_state('test_adinigsw', operation)
+        with connection.schema_editor() as editor:
+            # No database queries should be run for swapped models
+            operation.database_forwards('test_adinigsw', editor, project_state, new_state)
+            operation.database_backwards('test_adinigsw', editor, new_state, project_state)
+
+        operation = migrations.RemoveIndex('Pony', models.Index(fields=['pink'], name='my_name_idx'))
+        project_state, new_state = self.make_test_state("test_rminigsw", operation)
+        with connection.schema_editor() as editor:
+            operation.database_forwards('test_rminigsw', editor, project_state, new_state)
+            operation.database_backwards('test_rminigsw', editor, new_state, project_state)

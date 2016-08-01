@@ -37,7 +37,7 @@ class TestSaveLoad(TestCase):
     def test_null_handling(self):
         NullableUUIDModel.objects.create(field=None)
         loaded = NullableUUIDModel.objects.get()
-        self.assertEqual(loaded.field, None)
+        self.assertIsNone(loaded.field)
 
     def test_pk_validated(self):
         with self.assertRaisesMessage(TypeError, 'is not a valid UUID'):
@@ -47,13 +47,11 @@ class TestSaveLoad(TestCase):
             PrimaryKeyUUIDModel.objects.get(pk=[])
 
     def test_wrong_value(self):
-        self.assertRaisesMessage(
-            ValueError, 'badly formed hexadecimal UUID string',
-            UUIDModel.objects.get, field='not-a-uuid')
+        with self.assertRaisesMessage(ValueError, 'badly formed hexadecimal UUID string'):
+            UUIDModel.objects.get(field='not-a-uuid')
 
-        self.assertRaisesMessage(
-            ValueError, 'badly formed hexadecimal UUID string',
-            UUIDModel.objects.create, field='not-a-uuid')
+        with self.assertRaisesMessage(ValueError, 'badly formed hexadecimal UUID string'):
+            UUIDModel.objects.create(field='not-a-uuid')
 
 
 class TestMigrations(SimpleTestCase):

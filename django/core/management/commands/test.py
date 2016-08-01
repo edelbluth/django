@@ -1,4 +1,3 @@
-import os
 import sys
 
 from django.conf import settings
@@ -29,24 +28,23 @@ class Command(BaseCommand):
         super(Command, self).run_from_argv(argv)
 
     def add_arguments(self, parser):
-        parser.add_argument('args', metavar='test_label', nargs='*',
-            help='Module paths to test; can be modulename, modulename.TestCase or modulename.TestCase.test_method')
-        parser.add_argument('--noinput', '--no-input',
-            action='store_false', dest='interactive', default=True,
-            help='Tells Django to NOT prompt the user for input of any kind.'),
-        parser.add_argument('--failfast',
-            action='store_true', dest='failfast', default=False,
-            help='Tells Django to stop running the test suite after first '
-                 'failed test.'),
-        parser.add_argument('--testrunner',
-            action='store', dest='testrunner',
+        parser.add_argument(
+            'args', metavar='test_label', nargs='*',
+            help='Module paths to test; can be modulename, modulename.TestCase or modulename.TestCase.test_method'
+        )
+        parser.add_argument(
+            '--noinput', '--no-input', action='store_false', dest='interactive', default=True,
+            help='Tells Django to NOT prompt the user for input of any kind.',
+        )
+        parser.add_argument(
+            '--failfast', action='store_true', dest='failfast', default=False,
+            help='Tells Django to stop running the test suite after first failed test.',
+        )
+        parser.add_argument(
+            '--testrunner', action='store', dest='testrunner',
             help='Tells Django to use specified test runner class instead of '
-                 'the one specified by the TEST_RUNNER setting.'),
-        parser.add_argument('--liveserver',
-            action='store', dest='liveserver', default=None,
-            help='Overrides the default address where the live server (used '
-                 'with LiveServerTestCase) is expected to run from. The '
-                 'default value is localhost:8081-8179.'),
+                 'the one specified by the TEST_RUNNER setting.',
+        )
 
         test_runner_class = get_runner(settings, self.test_runner)
 
@@ -57,11 +55,7 @@ class Command(BaseCommand):
         from django.conf import settings
         from django.test.utils import get_runner
 
-        TestRunner = get_runner(settings, options.get('testrunner'))
-
-        if options.get('liveserver') is not None:
-            os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'] = options['liveserver']
-            del options['liveserver']
+        TestRunner = get_runner(settings, options['testrunner'])
 
         test_runner = TestRunner(**options)
         failures = test_runner.run_tests(test_labels)

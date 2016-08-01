@@ -3,6 +3,8 @@ from django.contrib.auth.models import User
 from django.contrib.flatpages.models import FlatPage
 from django.contrib.sites.models import Site
 from django.test import TestCase, modify_settings, override_settings
+from django.test.utils import ignore_warnings
+from django.utils.deprecation import RemovedInDjango20Warning
 
 from .settings import FLATPAGES_TEMPLATES
 
@@ -40,7 +42,7 @@ class TestDataMixin(object):
 @modify_settings(INSTALLED_APPS={'append': 'django.contrib.flatpages'})
 @override_settings(
     LOGIN_URL='/accounts/login/',
-    MIDDLEWARE_CLASSES=[
+    MIDDLEWARE=[
         'django.middleware.common.CommonMiddleware',
         'django.contrib.sessions.middleware.SessionMiddleware',
         'django.middleware.csrf.CsrfViewMiddleware',
@@ -68,8 +70,8 @@ class FlatpageMiddlewareTests(TestDataMixin, TestCase):
         "A flatpage served through a view can require authentication"
         response = self.client.get('/flatpage_root/sekrit/')
         self.assertRedirects(response, '/accounts/login/?next=/flatpage_root/sekrit/')
-        User.objects.create_user('testuser', 'test@example.com', 's3krit')
-        self.client.login(username='testuser', password='s3krit')
+        user = User.objects.create_user('testuser', 'test@example.com', 's3krit')
+        self.client.force_login(user)
         response = self.client.get('/flatpage_root/sekrit/')
         self.assertContains(response, "<p>Isn't it sekrit!</p>")
 
@@ -87,8 +89,8 @@ class FlatpageMiddlewareTests(TestDataMixin, TestCase):
         "A flatpage served by the middleware can require authentication"
         response = self.client.get('/sekrit/')
         self.assertRedirects(response, '/accounts/login/?next=/sekrit/')
-        User.objects.create_user('testuser', 'test@example.com', 's3krit')
-        self.client.login(username='testuser', password='s3krit')
+        user = User.objects.create_user('testuser', 'test@example.com', 's3krit')
+        self.client.force_login(user)
         response = self.client.get('/sekrit/')
         self.assertContains(response, "<p>Isn't it sekrit!</p>")
 
@@ -107,11 +109,27 @@ class FlatpageMiddlewareTests(TestDataMixin, TestCase):
         self.assertContains(response, "<p>Isn't it special!</p>")
 
 
+@ignore_warnings(category=RemovedInDjango20Warning)
+@override_settings(
+    MIDDLEWARE=None,
+    MIDDLEWARE_CLASSES=[
+        'django.middleware.common.CommonMiddleware',
+        'django.contrib.sessions.middleware.SessionMiddleware',
+        'django.middleware.csrf.CsrfViewMiddleware',
+        'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
+        'django.contrib.flatpages.middleware.FlatpageFallbackMiddleware',
+    ],
+)
+class FlatpageMiddlewareClassesTests(FlatpageMiddlewareTests):
+    pass
+
+
 @modify_settings(INSTALLED_APPS={'append': 'django.contrib.flatpages'})
 @override_settings(
     APPEND_SLASH=True,
     LOGIN_URL='/accounts/login/',
-    MIDDLEWARE_CLASSES=[
+    MIDDLEWARE=[
         'django.middleware.common.CommonMiddleware',
         'django.contrib.sessions.middleware.SessionMiddleware',
         'django.middleware.csrf.CsrfViewMiddleware',
@@ -172,3 +190,19 @@ class FlatpageMiddlewareAppendSlashTests(TestDataMixin, TestCase):
 
         response = self.client.get('/')
         self.assertContains(response, "<p>Root</p>")
+
+
+@ignore_warnings(category=RemovedInDjango20Warning)
+@override_settings(
+    MIDDLEWARE=None,
+    MIDDLEWARE_CLASSES=[
+        'django.middleware.common.CommonMiddleware',
+        'django.contrib.sessions.middleware.SessionMiddleware',
+        'django.middleware.csrf.CsrfViewMiddleware',
+        'django.contrib.auth.middleware.AuthenticationMiddleware',
+        'django.contrib.messages.middleware.MessageMiddleware',
+        'django.contrib.flatpages.middleware.FlatpageFallbackMiddleware',
+    ],
+)
+class FlatpageAppendSlashMiddlewareClassesTests(FlatpageMiddlewareAppendSlashTests):
+    pass

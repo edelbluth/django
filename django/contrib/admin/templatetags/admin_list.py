@@ -5,7 +5,8 @@ import warnings
 
 from django.contrib.admin.templatetags.admin_urls import add_preserved_filters
 from django.contrib.admin.utils import (
-    display_for_field, display_for_value, label_for_field, lookup_field,
+    display_for_field, display_for_value, get_fields_from_path,
+    label_for_field, lookup_field,
 )
 from django.contrib.admin.views.main import (
     ALL_VAR, ORDER_VAR, PAGE_VAR, SEARCH_VAR,
@@ -104,6 +105,7 @@ def result_headers(cl):
             return_attr=True
         )
         if attr:
+            field_name = _coerce_field_name(field_name, i)
             # Potentially not sortable
 
             # if the field is the action checkbox: no sorting and special class
@@ -143,7 +145,9 @@ def result_headers(cl):
         o_list_primary = []  # URL for making this field the primary sort
         o_list_remove = []  # URL for removing this field from sort
         o_list_toggle = []  # URL for toggling order type for this field
-        make_qs_param = lambda t, n: ('-' if t == 'desc' else '') + str(n)
+
+        def make_qs_param(t, n):
+            return ('-' if t == 'desc' else '') + str(n)
 
         for j, ot in ordering_field_columns.items():
             if j == i:  # Same column
@@ -181,6 +185,18 @@ def _boolean_icon(field_val):
     return format_html('<img src="{}" alt="{}" />', icon_url, field_val)
 
 
+def _coerce_field_name(field_name, field_index):
+    """
+    Coerce a field_name (which may be a callable) to a string.
+    """
+    if callable(field_name):
+        if field_name.__name__ == '<lambda>':
+            return 'lambda' + str(field_index)
+        else:
+            return field_name.__name__
+    return field_name
+
+
 def items_for_result(cl, result, form):
     """
     Generates the actual list of data.
@@ -195,9 +211,9 @@ def items_for_result(cl, result, form):
 
     first = True
     pk = cl.lookup_opts.pk.attname
-    for field_name in cl.list_display:
+    for field_index, field_name in enumerate(cl.list_display):
         empty_value_display = cl.model_admin.get_empty_value_display()
-        row_classes = ['field-%s' % field_name]
+        row_classes = ['field-%s' % _coerce_field_name(field_name, field_index)]
         try:
             f, attr, value = lookup_field(field_name, result, cl.model_admin)
         except ObjectDoesNotExist:
@@ -331,7 +347,7 @@ def date_hierarchy(cl):
     """
     if cl.date_hierarchy:
         field_name = cl.date_hierarchy
-        field = cl.opts.get_field(field_name)
+        field = get_fields_from_path(cl.model, field_name)[-1]
         dates_or_datetimes = 'datetimes' if isinstance(field, models.DateTimeField) else 'dates'
         year_field = '%s__year' % field_name
         month_field = '%s__month' % field_name
@@ -341,7 +357,8 @@ def date_hierarchy(cl):
         month_lookup = cl.params.get(month_field)
         day_lookup = cl.params.get(day_field)
 
-        link = lambda filters: cl.get_query_string(filters, [field_generic])
+        def link(filters):
+            return cl.get_query_string(filters, [field_generic])
 
         if not (year_lookup or month_lookup or day_lookup):
             # select appropriate start level

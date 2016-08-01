@@ -111,7 +111,8 @@ def setup_test_environment():
     settings.EMAIL_BACKEND = 'django.core.mail.backends.locmem.EmailBackend'
 
     request._original_allowed_hosts = settings.ALLOWED_HOSTS
-    settings.ALLOWED_HOSTS = ['*']
+    # Add the default host of the test client.
+    settings.ALLOWED_HOSTS = settings.ALLOWED_HOSTS + ['testserver']
 
     mail.outbox = []
 
@@ -352,7 +353,7 @@ def compare_xml(want, got):
     ordering should not be important. Comment nodes are not considered in the
     comparison. Leading and trailing whitespace is ignored on both chunks.
 
-    Based on http://codespeak.net/svn/lxml/trunk/src/lxml/doctestcompare.py
+    Based on https://github.com/lxml/lxml/blob/master/src/lxml/doctestcompare.py
     """
     _norm_whitespace_re = re.compile(r'[ \t\n][ \t\n]+')
 
@@ -423,16 +424,11 @@ def strip_quotes(want, got):
     """
     def is_quoted_string(s):
         s = s.strip()
-        return (len(s) >= 2
-                and s[0] == s[-1]
-                and s[0] in ('"', "'"))
+        return len(s) >= 2 and s[0] == s[-1] and s[0] in ('"', "'")
 
     def is_quoted_unicode(s):
         s = s.strip()
-        return (len(s) >= 3
-                and s[0] == 'u'
-                and s[1] == s[-1]
-                and s[1] in ('"', "'"))
+        return len(s) >= 3 and s[0] == 'u' and s[1] == s[-1] and s[1] in ('"', "'")
 
     if is_quoted_string(want) and is_quoted_string(got):
         want = want.strip()[1:-1]
@@ -502,7 +498,7 @@ class ignore_warnings(TestContextDecorator):
 
 
 @contextmanager
-def patch_logger(logger_name, log_level):
+def patch_logger(logger_name, log_level, log_kwargs=False):
     """
     Context manager that takes a named logger and the logging level
     and provides a simple mock-like list of messages received
@@ -510,7 +506,8 @@ def patch_logger(logger_name, log_level):
     calls = []
 
     def replacement(msg, *args, **kwargs):
-        calls.append(msg % args)
+        call = msg % args
+        calls.append((call, kwargs) if log_kwargs else call)
     logger = logging.getLogger(logger_name)
     orig = getattr(logger, log_level)
     setattr(logger, log_level, replacement)
@@ -525,9 +522,11 @@ def patch_logger(logger_name, log_level):
 # don't enforce a specific timezone (with timezone.override or equivalent),
 # or attempt to interpret naive datetimes in the default timezone.
 
-requires_tz_support = skipUnless(TZ_SUPPORT,
-        "This test relies on the ability to run a program in an arbitrary "
-        "time zone, but your operating system isn't able to do that.")
+requires_tz_support = skipUnless(
+    TZ_SUPPORT,
+    "This test relies on the ability to run a program in an arbitrary "
+    "time zone, but your operating system isn't able to do that."
+)
 
 
 @contextmanager
@@ -707,3 +706,13 @@ class isolate_apps(TestContextDecorator):
 
     def disable(self):
         setattr(Options, 'default_apps', self.old_apps)
+
+
+def tag(*tags):
+    """
+    Decorator to add tags to a test class or method.
+    """
+    def decorator(obj):
+        setattr(obj, 'tags', set(tags))
+        return obj
+    return decorator

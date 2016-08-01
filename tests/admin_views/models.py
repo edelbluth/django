@@ -538,10 +538,15 @@ class Plot(models.Model):
 @python_2_unicode_compatible
 class PlotDetails(models.Model):
     details = models.CharField(max_length=100)
-    plot = models.OneToOneField(Plot, models.CASCADE)
+    plot = models.OneToOneField(Plot, models.CASCADE, null=True, blank=True)
 
     def __str__(self):
         return self.details
+
+
+class PlotProxy(Plot):
+    class Meta:
+        proxy = True
 
 
 @python_2_unicode_compatible
@@ -616,6 +621,7 @@ class WorkHour(models.Model):
 
 class Question(models.Model):
     question = models.CharField(max_length=20)
+    posted = models.DateField(default=datetime.date.today)
 
 
 @python_2_unicode_compatible
@@ -807,8 +813,10 @@ class Simple(models.Model):
 
 
 class Choice(models.Model):
-    choice = models.IntegerField(blank=True, null=True,
-        choices=((1, 'Yes'), (0, 'No'), (None, 'No opinion')))
+    choice = models.IntegerField(
+        blank=True, null=True,
+        choices=((1, 'Yes'), (0, 'No'), (None, 'No opinion')),
+    )
 
 
 class ParentWithDependentChildren(models.Model):

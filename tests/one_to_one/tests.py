@@ -1,12 +1,13 @@
 from __future__ import unicode_literals
 
 from django.db import IntegrityError, connection, transaction
-from django.test import TestCase
+from django.test import TestCase, ignore_warnings
+from django.utils.deprecation import RemovedInDjango20Warning
 
 from .models import (
     Bar, Director, Favorites, HiddenPointer, ManualPrimaryKey, MultiModel,
-    Place, Pointer, RelatedModel, Restaurant, School, Target, UndergroundBar,
-    Waiter,
+    Place, Pointer, RelatedModel, Restaurant, School, Target, ToFieldPointer,
+    UndergroundBar, Waiter,
 )
 
 
@@ -228,11 +229,12 @@ class OneToOneTests(TestCase):
         ug_bar.place = None
         self.assertIsNone(ug_bar.place)
 
-        # Assigning None fails: Place.restaurant is null=False
-        self.assertRaises(ValueError, setattr, p, 'restaurant', None)
+        # Assigning None will not fail: Place.restaurant is null=False
+        setattr(p, 'restaurant', None)
 
         # You also can't assign an object of the wrong type here
-        self.assertRaises(ValueError, setattr, p, 'restaurant', p)
+        with self.assertRaises(ValueError):
+            setattr(p, 'restaurant', p)
 
         # Creation using keyword argument should cache the related object.
         p = Place.objects.get(name="Demon Dogs")
@@ -421,6 +423,7 @@ class OneToOneTests(TestCase):
             hasattr(Target, HiddenPointer._meta.get_field('target').remote_field.get_accessor_name())
         )
 
+    @ignore_warnings(category=RemovedInDjango20Warning)  # for use_for_related_fields deprecation
     def test_related_object(self):
         public_school = School.objects.create(is_public=True)
         public_director = Director.objects.create(school=public_school, is_temp=False)
@@ -456,19 +459,41 @@ class OneToOneTests(TestCase):
         # If the manager is marked "use_for_related_fields", it'll get used instead
         # of the "bare" queryset. Usually you'd define this as a property on the class,
         # but this approximates that in a way that's easier in tests.
-        School.objects.use_for_related_fields = True
+        School._default_manager.use_for_related_fields = True
         try:
             private_director = Director._base_manager.get(pk=private_director.pk)
-            self.assertRaises(School.DoesNotExist, lambda: private_director.school)
+            with self.assertRaises(School.DoesNotExist):
+                private_director.school
         finally:
-            School.objects.use_for_related_fields = False
+            School._default_manager.use_for_related_fields = False
 
-        Director.objects.use_for_related_fields = True
+        Director._default_manager.use_for_related_fields = True
         try:
             private_school = School._base_manager.get(pk=private_school.pk)
-            self.assertRaises(Director.DoesNotExist, lambda: private_school.director)
+            with self.assertRaises(Director.DoesNotExist):
+                private_school.director
         finally:
-            Director.objects.use_for_related_fields = False
+            Director._default_manager.use_for_related_fields = False
+
+        School._meta.base_manager_name = 'objects'
+        School._meta._expire_cache()
+        try:
+            private_director = Director._base_manager.get(pk=private_director.pk)
+            with self.assertRaises(School.DoesNotExist):
+                private_director.school
+        finally:
+            School._meta.base_manager_name = None
+            School._meta._expire_cache()
+
+        Director._meta.base_manager_name = 'objects'
+        Director._meta._expire_cache()
+        try:
+            private_school = School._base_manager.get(pk=private_school.pk)
+            with self.assertRaises(Director.DoesNotExist):
+                private_school.director
+        finally:
+            Director._meta.base_manager_name = None
+            Director._meta._expire_cache()
 
     def test_hasattr_related_object(self):
         # The exception raised on attribute access when a related object
@@ -505,3 +530,9 @@ class OneToOneTests(TestCase):
         r = Restaurant.objects.first()
         r2 = Restaurant.objects.filter(pk__exact=r).first()
         self.assertEqual(r, r2)
+
+    def test_primary_key_to_field_filter(self):
+        target = Target.objects.create(name='foo')
+        pointer = ToFieldPointer.objects.create(target=target)
+        self.assertQuerysetEqual(ToFieldPointer.objects.filter(target=target), [pointer], lambda x: x)
+        self.assertQuerysetEqual(ToFieldPointer.objects.filter(pk__exact=pointer), [pointer], lambda x: x)

@@ -5,7 +5,7 @@ Unit tests for reverse URL lookups.
 from __future__ import unicode_literals
 
 import sys
-import unittest
+import threading
 
 from admin_scripts.tests import AdminScriptTestCase
 
@@ -252,13 +252,13 @@ class NoURLPatternsTests(SimpleTestCase):
         """
         resolver = RegexURLResolver(r'^$', settings.ROOT_URLCONF)
 
-        self.assertRaisesMessage(
+        with self.assertRaisesMessage(
             ImproperlyConfigured,
             "The included URLconf 'urlpatterns_reverse.no_urls' does not "
             "appear to have any patterns in it. If you see valid patterns in "
-            "the file then the issue is probably caused by a circular import.",
-            getattr, resolver, 'url_patterns'
-        )
+            "the file then the issue is probably caused by a circular import."
+        ):
+            getattr(resolver, 'url_patterns')
 
 
 @override_settings(ROOT_URLCONF='urlpatterns_reverse.urls')
@@ -275,7 +275,8 @@ class URLPatternReverse(SimpleTestCase):
 
     def test_reverse_none(self):
         # Reversing None should raise an error, not return the last un-named view.
-        self.assertRaises(NoReverseMatch, reverse, None)
+        with self.assertRaises(NoReverseMatch):
+            reverse(None)
 
     @override_script_prefix('/{{invalid}}/')
     def test_prefix_braces(self):
@@ -312,16 +313,9 @@ class URLPatternReverse(SimpleTestCase):
 
     def test_patterns_reported(self):
         # Regression for #17076
-        try:
+        with self.assertRaisesMessage(NoReverseMatch, r"1 pattern(s) tried: ['people/(?P<name>\\w+)/$']"):
             # this url exists, but requires an argument
             reverse("people", args=[])
-        except NoReverseMatch as e:
-            pattern_description = r"1 pattern(s) tried: ['people/(?P<name>\\w+)/$']"
-            self.assertIn(pattern_description, str(e))
-        else:
-            # we can't use .assertRaises, since we want to inspect the
-            # exception
-            self.fail("Expected a NoReverseMatch, but none occurred.")
 
     @override_script_prefix('/script:name/')
     def test_script_name_escaping(self):
@@ -338,7 +332,7 @@ class URLPatternReverse(SimpleTestCase):
         )
 
 
-class ResolverTests(unittest.TestCase):
+class ResolverTests(SimpleTestCase):
     @ignore_warnings(category=RemovedInDjango20Warning)
     def test_resolver_repr(self):
         """
@@ -358,10 +352,13 @@ class ResolverTests(unittest.TestCase):
         urls = 'urlpatterns_reverse.named_urls'
         proxy_url = reverse_lazy('named-url1', urlconf=urls)
         resolver = get_resolver(urls)
-        try:
-            resolver.resolve(proxy_url)
-        except TypeError:
-            self.fail('Failed to coerce lazy object to text')
+        resolver.resolve(proxy_url)
+
+    def test_resolver_reverse(self):
+        resolver = get_resolver('urlpatterns_reverse.named_urls')
+        self.assertEqual(resolver.reverse('named-url1'), '')
+        self.assertEqual(resolver.reverse('named-url2', 'arg'), 'extra/arg/')
+        self.assertEqual(resolver.reverse('named-url2', extra='arg'), 'extra/arg/')
 
     def test_non_regex(self):
         """
@@ -372,10 +369,14 @@ class ResolverTests(unittest.TestCase):
 
         Regression for #10834.
         """
-        self.assertRaises(Resolver404, resolve, '')
-        self.assertRaises(Resolver404, resolve, 'a')
-        self.assertRaises(Resolver404, resolve, '\\')
-        self.assertRaises(Resolver404, resolve, '.')
+        with self.assertRaises(Resolver404):
+            resolve('')
+        with self.assertRaises(Resolver404):
+            resolve('a')
+        with self.assertRaises(Resolver404):
+            resolve('\\')
+        with self.assertRaises(Resolver404):
+            resolve('.')
 
     def test_404_tried_urls_have_names(self):
         """
@@ -396,32 +397,50 @@ class ResolverTests(unittest.TestCase):
             [{'type': RegexURLResolver}, {'type': RegexURLPattern, 'name': None}],
             [{'type': RegexURLResolver}, {'type': RegexURLResolver}],
         ]
-        try:
+        with self.assertRaisesMessage(Resolver404, b'tried' if six.PY2 else 'tried') as cm:
             resolve('/included/non-existent-url', urlconf=urls)
-            self.fail('resolve did not raise a 404')
-        except Resolver404 as e:
-            # make sure we at least matched the root ('/') url resolver:
-            self.assertIn('tried', e.args[0])
-            tried = e.args[0]['tried']
-            self.assertEqual(
-                len(e.args[0]['tried']),
-                len(url_types_names),
-                'Wrong number of tried URLs returned.  Expected %s, got %s.' % (
-                    len(url_types_names), len(e.args[0]['tried'])
-                )
+        e = cm.exception
+        # make sure we at least matched the root ('/') url resolver:
+        self.assertIn('tried', e.args[0])
+        tried = e.args[0]['tried']
+        self.assertEqual(
+            len(e.args[0]['tried']),
+            len(url_types_names),
+            'Wrong number of tried URLs returned.  Expected %s, got %s.' % (
+                len(url_types_names), len(e.args[0]['tried'])
             )
-            for tried, expected in zip(e.args[0]['tried'], url_types_names):
-                for t, e in zip(tried, expected):
-                    self.assertIsInstance(t, e['type']), str('%s is not an instance of %s') % (t, e['type'])
-                    if 'name' in e:
-                        if not e['name']:
-                            self.assertIsNone(t.name, 'Expected no URL name but found %s.' % t.name)
-                        else:
-                            self.assertEqual(
-                                t.name,
-                                e['name'],
-                                'Wrong URL name.  Expected "%s", got "%s".' % (e['name'], t.name)
-                            )
+        )
+        for tried, expected in zip(e.args[0]['tried'], url_types_names):
+            for t, e in zip(tried, expected):
+                self.assertIsInstance(t, e['type']), str('%s is not an instance of %s') % (t, e['type'])
+                if 'name' in e:
+                    if not e['name']:
+                        self.assertIsNone(t.name, 'Expected no URL name but found %s.' % t.name)
+                    else:
+                        self.assertEqual(
+                            t.name,
+                            e['name'],
+                            'Wrong URL name.  Expected "%s", got "%s".' % (e['name'], t.name)
+                        )
+
+    def test_namespaced_view_detail(self):
+        resolver = get_resolver('urlpatterns_reverse.nested_urls')
+        self.assertTrue(resolver._is_callback('urlpatterns_reverse.nested_urls.view1'))
+        self.assertTrue(resolver._is_callback('urlpatterns_reverse.nested_urls.view2'))
+        self.assertTrue(resolver._is_callback('urlpatterns_reverse.nested_urls.View3'))
+        self.assertFalse(resolver._is_callback('urlpatterns_reverse.nested_urls.blub'))
+
+    def test_populate_concurrency(self):
+        """
+        RegexURLResolver._populate() can be called concurrently, but not more
+        than once per thread (#26888).
+        """
+        resolver = RegexURLResolver(r'^/', 'urlpatterns_reverse.urls')
+        resolver._local.populating = True
+        thread = threading.Thread(target=resolver._populate)
+        thread.start()
+        thread.join()
+        self.assertNotEqual(resolver._reverse_dict, {})
 
 
 @override_settings(ROOT_URLCONF='urlpatterns_reverse.reverse_lazy_urls')
@@ -432,10 +451,10 @@ class ReverseLazyTest(TestCase):
         self.assertRedirects(response, "/redirected_to/", status_code=302)
 
     def test_user_permission_with_lazy_reverse(self):
-        User.objects.create_user('alfred', 'alfred@example.com', password='testpw')
+        alfred = User.objects.create_user('alfred', 'alfred@example.com', password='testpw')
         response = self.client.get('/login_required_view/')
         self.assertRedirects(response, "/login/?next=/login_required_view/", status_code=302)
-        self.client.login(username='alfred', password='testpw')
+        self.client.force_login(alfred)
         response = self.client.get('/login_required_view/')
         self.assertEqual(response.status_code, 200)
 
@@ -493,7 +512,8 @@ class ReverseShortcutTests(SimpleTestCase):
         self.assertEqual(res.url, '/places/1/')
         res = redirect('headlines', year='2008', month='02', day='17')
         self.assertEqual(res.url, '/headlines/2008.02.17/')
-        self.assertRaises(NoReverseMatch, redirect, 'not-a-view')
+        with self.assertRaises(NoReverseMatch):
+            redirect('not-a-view')
 
     def test_redirect_to_url(self):
         res = redirect('/foo/')
@@ -524,7 +544,8 @@ class ReverseShortcutTests(SimpleTestCase):
         from .views import absolute_kwargs_view
         res = redirect(absolute_kwargs_view)
         self.assertEqual(res.url, '/absolute_arg_view/')
-        self.assertRaises(NoReverseMatch, redirect, absolute_kwargs_view, wrong_argument=None)
+        with self.assertRaises(NoReverseMatch):
+            redirect(absolute_kwargs_view, wrong_argument=None)
 
 
 @override_settings(ROOT_URLCONF='urlpatterns_reverse.namespace_urls')
@@ -533,20 +554,28 @@ class NamespaceTests(SimpleTestCase):
 
     def test_ambiguous_object(self):
         "Names deployed via dynamic URL objects that require namespaces can't be resolved"
-        self.assertRaises(NoReverseMatch, reverse, 'urlobject-view')
-        self.assertRaises(NoReverseMatch, reverse, 'urlobject-view', args=[37, 42])
-        self.assertRaises(NoReverseMatch, reverse, 'urlobject-view', kwargs={'arg1': 42, 'arg2': 37})
+        with self.assertRaises(NoReverseMatch):
+            reverse('urlobject-view')
+        with self.assertRaises(NoReverseMatch):
+            reverse('urlobject-view', args=[37, 42])
+        with self.assertRaises(NoReverseMatch):
+            reverse('urlobject-view', kwargs={'arg1': 42, 'arg2': 37})
 
     def test_ambiguous_urlpattern(self):
         "Names deployed via dynamic URL objects that require namespaces can't be resolved"
-        self.assertRaises(NoReverseMatch, reverse, 'inner-nothing')
-        self.assertRaises(NoReverseMatch, reverse, 'inner-nothing', args=[37, 42])
-        self.assertRaises(NoReverseMatch, reverse, 'inner-nothing', kwargs={'arg1': 42, 'arg2': 37})
+        with self.assertRaises(NoReverseMatch):
+            reverse('inner-nothing')
+        with self.assertRaises(NoReverseMatch):
+            reverse('inner-nothing', args=[37, 42])
+        with self.assertRaises(NoReverseMatch):
+            reverse('inner-nothing', kwargs={'arg1': 42, 'arg2': 37})
 
     def test_non_existent_namespace(self):
         "Non-existent namespaces raise errors"
-        self.assertRaises(NoReverseMatch, reverse, 'blahblah:urlobject-view')
-        self.assertRaises(NoReverseMatch, reverse, 'test-ns1:blahblah:urlobject-view')
+        with self.assertRaises(NoReverseMatch):
+            reverse('blahblah:urlobject-view')
+        with self.assertRaises(NoReverseMatch):
+            reverse('test-ns1:blahblah:urlobject-view')
 
     def test_normal_name(self):
         "Normal lookups work as expected"
@@ -770,7 +799,7 @@ class RequestURLconfTests(SimpleTestCase):
         self.assertEqual(response.status_code, 404)
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.ChangeURLconfMiddleware' % middleware.__name__,
         ]
     )
@@ -784,7 +813,7 @@ class RequestURLconfTests(SimpleTestCase):
         self.assertEqual(response.content, b'outer:,inner:/second_test/')
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.NullChangeURLconfMiddleware' % middleware.__name__,
         ]
     )
@@ -802,7 +831,7 @@ class RequestURLconfTests(SimpleTestCase):
         self.assertEqual(response.status_code, 404)
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.ChangeURLconfMiddleware' % middleware.__name__,
             '%s.ReverseInnerInResponseMiddleware' % middleware.__name__,
         ]
@@ -817,7 +846,7 @@ class RequestURLconfTests(SimpleTestCase):
         self.assertEqual(response.content, b'/second_test/')
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.ChangeURLconfMiddleware' % middleware.__name__,
             '%s.ReverseOuterInResponseMiddleware' % middleware.__name__,
         ]
@@ -832,7 +861,7 @@ class RequestURLconfTests(SimpleTestCase):
             self.client.get('/second_test/')
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.ChangeURLconfMiddleware' % middleware.__name__,
             '%s.ReverseInnerInStreaming' % middleware.__name__,
         ]
@@ -847,7 +876,7 @@ class RequestURLconfTests(SimpleTestCase):
         self.assertEqual(b''.join(response), b'/second_test/')
 
     @override_settings(
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             '%s.ChangeURLconfMiddleware' % middleware.__name__,
             '%s.ReverseOuterInStreaming' % middleware.__name__,
         ]
@@ -890,16 +919,11 @@ class DefaultErrorHandlerTests(SimpleTestCase):
 
     def test_default_handler(self):
         "If the urls.py doesn't specify handlers, the defaults are used"
-        try:
-            response = self.client.get('/test/')
-            self.assertEqual(response.status_code, 404)
-        except AttributeError:
-            self.fail("Shouldn't get an AttributeError due to undefined 404 handler")
+        response = self.client.get('/test/')
+        self.assertEqual(response.status_code, 404)
 
-        try:
-            self.assertRaises(ValueError, self.client.get, '/bad_view/')
-        except AttributeError:
-            self.fail("Shouldn't get an AttributeError due to undefined 500 handler")
+        with self.assertRaisesMessage(ValueError, "I don't think I'm getting good"):
+            self.client.get('/bad_view/')
 
 
 @override_settings(ROOT_URLCONF=None)
@@ -907,7 +931,8 @@ class NoRootUrlConfTests(SimpleTestCase):
     """Tests for handler404 and handler500 if ROOT_URLCONF is None"""
 
     def test_no_handler_exception(self):
-        self.assertRaises(ImproperlyConfigured, self.client.get, '/test/me/')
+        with self.assertRaises(ImproperlyConfigured):
+            self.client.get('/test/me/')
 
 
 @override_settings(ROOT_URLCONF='urlpatterns_reverse.namespace_urls')

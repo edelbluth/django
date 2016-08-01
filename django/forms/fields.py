@@ -6,6 +6,7 @@ from __future__ import unicode_literals
 
 import copy
 import datetime
+import itertools
 import os
 import re
 import sys
@@ -119,7 +120,8 @@ class Field(object):
         messages.update(error_messages or {})
         self.error_messages = messages
 
-        self.validators = self.default_validators + validators
+        self.validators = list(itertools.chain(self.default_validators, validators))
+
         super(Field, self).__init__()
 
     def prepare_value(self, value):
@@ -167,6 +169,8 @@ class Field(object):
         For most fields, this will simply be data; FileFields need to handle it
         a bit differently.
         """
+        if self.disabled:
+            return initial
         return data
 
     def widget_attrs(self, widget):
@@ -210,10 +214,11 @@ class Field(object):
 
 
 class CharField(Field):
-    def __init__(self, max_length=None, min_length=None, strip=True, *args, **kwargs):
+    def __init__(self, max_length=None, min_length=None, strip=True, empty_value='', *args, **kwargs):
         self.max_length = max_length
         self.min_length = min_length
         self.strip = strip
+        self.empty_value = empty_value
         super(CharField, self).__init__(*args, **kwargs)
         if min_length is not None:
             self.validators.append(validators.MinLengthValidator(int(min_length)))
@@ -223,7 +228,7 @@ class CharField(Field):
     def to_python(self, value):
         "Returns a Unicode object."
         if value in self.empty_values:
-            return ''
+            return self.empty_value
         value = force_text(value)
         if self.strip:
             value = value.strip()
@@ -233,7 +238,10 @@ class CharField(Field):
         attrs = super(CharField, self).widget_attrs(widget)
         if self.max_length is not None:
             # The HTML attribute is maxlength, not max_length.
-            attrs.update({'maxlength': str(self.max_length)})
+            attrs['maxlength'] = str(self.max_length)
+        if self.min_length is not None:
+            # The HTML attribute is minlength, not min_length.
+            attrs['minlength'] = str(self.min_length)
         return attrs
 
 
@@ -268,7 +276,7 @@ class IntegerField(Field):
             value = formats.sanitize_separators(value)
         # Strip trailing decimal and zeros.
         try:
-            value = int(self.re_decimal.sub('', str(value)))
+            value = int(self.re_decimal.sub('', force_text(value)))
         except (ValueError, TypeError):
             raise ValidationError(self.error_messages['invalid'], code='invalid')
         return value
@@ -488,7 +496,7 @@ class DurationField(Field):
             return None
         if isinstance(value, datetime.timedelta):
             return value
-        value = parse_duration(value)
+        value = parse_duration(force_text(value))
         if value is None:
             raise ValidationError(self.error_messages['invalid'], code='invalid')
         return value
@@ -524,9 +532,8 @@ class EmailField(CharField):
     widget = EmailInput
     default_validators = [validators.validate_email]
 
-    def clean(self, value):
-        value = self.to_python(value).strip()
-        return super(EmailField, self).clean(value)
+    def __init__(self, *args, **kwargs):
+        super(EmailField, self).__init__(*args, strip=True, **kwargs)
 
 
 class FileField(Field):
@@ -657,6 +664,9 @@ class URLField(CharField):
     }
     default_validators = [validators.URLValidator()]
 
+    def __init__(self, *args, **kwargs):
+        super(URLField, self).__init__(*args, strip=True, **kwargs)
+
     def to_python(self, value):
 
         def split_url(url):
@@ -688,10 +698,6 @@ class URLField(CharField):
             value = urlunsplit(url_fields)
         return value
 
-    def clean(self, value):
-        value = self.to_python(value).strip()
-        return super(URLField, self).clean(value)
-
 
 class BooleanField(Field):
     widget = CheckboxInput
@@ -713,12 +719,9 @@ class BooleanField(Field):
             raise ValidationError(self.error_messages['required'], code='required')
 
     def has_changed(self, initial, data):
-        # Sometimes data or initial could be None or '' which should be the
-        # same thing as False.
-        if initial == 'False':
-            # show_hidden_initial may have transformed False to 'False'
-            initial = False
-        return bool(initial) != bool(data)
+        # Sometimes data or initial may be a string equivalent of a boolean
+        # so we should run it through to_python first to get a boolean value
+        return self.to_python(initial) != self.to_python(data)
 
 
 class NullBooleanField(BooleanField):
@@ -747,14 +750,6 @@ class NullBooleanField(BooleanField):
     def validate(self, value):
         pass
 
-    def has_changed(self, initial, data):
-        # None (unknown) and False (No) are not the same
-        if initial is not None:
-            initial = bool(initial)
-        if data is not None:
-            data = bool(data)
-        return initial != data
-
 
 class CallableChoiceIterator(object):
     def __init__(self, choices_func):
@@ -773,8 +768,10 @@ class ChoiceField(Field):
 
     def __init__(self, choices=(), required=True, widget=None, label=None,
                  initial=None, help_text='', *args, **kwargs):
-        super(ChoiceField, self).__init__(required=required, widget=widget, label=label,
-                                        initial=initial, help_text=help_text, *args, **kwargs)
+        super(ChoiceField, self).__init__(
+            required=required, widget=widget, label=label, initial=initial,
+            help_text=help_text, *args, **kwargs
+        )
         self.choices = choices
 
     def __deepcopy__(self, memo):
@@ -1088,9 +1085,10 @@ class FilePathField(ChoiceField):
                  initial=None, help_text='', *args, **kwargs):
         self.path, self.match, self.recursive = path, match, recursive
         self.allow_files, self.allow_folders = allow_files, allow_folders
-        super(FilePathField, self).__init__(choices=(), required=required,
-            widget=widget, label=label, initial=initial, help_text=help_text,
-            *args, **kwargs)
+        super(FilePathField, self).__init__(
+            choices=(), required=required, widget=widget, label=label,
+            initial=initial, help_text=help_text, *args, **kwargs
+        )
 
         if self.required:
             self.choices = []

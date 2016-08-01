@@ -9,6 +9,7 @@ from django.db.migrations.state import (
     ModelState, ProjectState, get_related_models_recursive,
 )
 from django.test import SimpleTestCase, override_settings
+from django.test.utils import isolate_apps
 from django.utils import six
 
 from .models import (
@@ -120,11 +121,11 @@ class StateTests(SimpleTestCase):
         self.assertEqual(author_state.name, "Author")
         self.assertEqual([x for x, y in author_state.fields], ["id", "name", "bio", "age"])
         self.assertEqual(author_state.fields[1][1].max_length, 255)
-        self.assertEqual(author_state.fields[2][1].null, False)
-        self.assertEqual(author_state.fields[3][1].null, True)
+        self.assertIs(author_state.fields[2][1].null, False)
+        self.assertIs(author_state.fields[3][1].null, True)
         self.assertEqual(
             author_state.options,
-            {"unique_together": {("name", "bio")}, "index_together": {("bio", "age")}}
+            {"unique_together": {("name", "bio")}, "index_together": {("bio", "age")}, "indexes": []}
         )
         self.assertEqual(author_state.bases, (models.Model, ))
 
@@ -132,15 +133,15 @@ class StateTests(SimpleTestCase):
         self.assertEqual(book_state.name, "Book")
         self.assertEqual([x for x, y in book_state.fields], ["id", "title", "author", "contributors"])
         self.assertEqual(book_state.fields[1][1].max_length, 1000)
-        self.assertEqual(book_state.fields[2][1].null, False)
+        self.assertIs(book_state.fields[2][1].null, False)
         self.assertEqual(book_state.fields[3][1].__class__.__name__, "ManyToManyField")
-        self.assertEqual(book_state.options, {"verbose_name": "tome", "db_table": "test_tome"})
+        self.assertEqual(book_state.options, {"verbose_name": "tome", "db_table": "test_tome", "indexes": []})
         self.assertEqual(book_state.bases, (models.Model, ))
 
         self.assertEqual(author_proxy_state.app_label, "migrations")
         self.assertEqual(author_proxy_state.name, "AuthorProxy")
         self.assertEqual(author_proxy_state.fields, [])
-        self.assertEqual(author_proxy_state.options, {"proxy": True, "ordering": ["name"]})
+        self.assertEqual(author_proxy_state.options, {"proxy": True, "ordering": ["name"], "indexes": []})
         self.assertEqual(author_proxy_state.bases, ("migrations.author", ))
 
         self.assertEqual(sub_author_state.app_label, "migrations")
@@ -189,6 +190,109 @@ class StateTests(SimpleTestCase):
         project_state = ProjectState.from_apps(new_apps)
         author_state = project_state.models['migrations', 'author']
         self.assertEqual(author_state.managers, [('authors', custom_manager)])
+
+    def test_custom_default_manager_named_objects_with_false_migration_flag(self):
+        """
+        When a manager is added with a name of 'objects' but it does not
+        have `use_in_migrations = True`, no migration should be added to the
+        model state (#26643).
+        """
+        new_apps = Apps(['migrations'])
+
+        class Author(models.Model):
+            objects = models.Manager()
+
+            class Meta:
+                app_label = 'migrations'
+                apps = new_apps
+
+        project_state = ProjectState.from_apps(new_apps)
+        author_state = project_state.models['migrations', 'author']
+        self.assertEqual(author_state.managers, [])
+
+    def test_no_duplicate_managers(self):
+        """
+        When a manager is added with `use_in_migrations = True` and a parent
+        model had a manager with the same name and `use_in_migrations = True`,
+        the parent's manager shouldn't appear in the model state (#26881).
+        """
+        new_apps = Apps(['migrations'])
+
+        class PersonManager(models.Manager):
+            use_in_migrations = True
+
+        class Person(models.Model):
+            objects = PersonManager()
+
+            class Meta:
+                abstract = True
+
+        class BossManager(PersonManager):
+            use_in_migrations = True
+
+        class Boss(Person):
+            objects = BossManager()
+
+            class Meta:
+                app_label = 'migrations'
+                apps = new_apps
+
+        project_state = ProjectState.from_apps(new_apps)
+        boss_state = project_state.models['migrations', 'boss']
+        self.assertEqual(boss_state.managers, [('objects', Boss.objects)])
+
+    def test_custom_default_manager(self):
+        new_apps = Apps(['migrations'])
+
+        class Author(models.Model):
+            manager1 = models.Manager()
+            manager2 = models.Manager()
+
+            class Meta:
+                app_label = 'migrations'
+                apps = new_apps
+                default_manager_name = 'manager2'
+
+        project_state = ProjectState.from_apps(new_apps)
+        author_state = project_state.models['migrations', 'author']
+        self.assertEqual(author_state.options['default_manager_name'], 'manager2')
+        self.assertEqual(author_state.managers, [('manager2', Author.manager1)])
+
+    def test_custom_base_manager(self):
+        new_apps = Apps(['migrations'])
+
+        class Author(models.Model):
+            manager1 = models.Manager()
+            manager2 = models.Manager()
+
+            class Meta:
+                app_label = 'migrations'
+                apps = new_apps
+                base_manager_name = 'manager2'
+
+        class Author2(models.Model):
+            manager1 = models.Manager()
+            manager2 = models.Manager()
+
+            class Meta:
+                app_label = 'migrations'
+                apps = new_apps
+                base_manager_name = 'manager1'
+
+        project_state = ProjectState.from_apps(new_apps)
+
+        author_state = project_state.models['migrations', 'author']
+        self.assertEqual(author_state.options['base_manager_name'], 'manager2')
+        self.assertEqual(author_state.managers, [
+            ('manager1', Author.manager1),
+            ('manager2', Author.manager2),
+        ])
+
+        author2_state = project_state.models['migrations', 'author2']
+        self.assertEqual(author2_state.options['base_manager_name'], 'manager1')
+        self.assertEqual(author2_state.managers, [
+            ('manager1', Author2.manager1),
+        ])
 
     def test_apps_bulk_update(self):
         """
@@ -256,18 +360,16 @@ class StateTests(SimpleTestCase):
 
         new_apps = project_state.apps
         self.assertEqual(new_apps.get_model("migrations", "Tag")._meta.get_field("name").max_length, 100)
-        self.assertEqual(new_apps.get_model("migrations", "Tag")._meta.get_field("hidden").null, False)
+        self.assertIs(new_apps.get_model("migrations", "Tag")._meta.get_field("hidden").null, False)
 
         self.assertEqual(len(new_apps.get_model("migrations", "SubTag")._meta.local_fields), 2)
 
         Food = new_apps.get_model("migrations", "Food")
-        managers = sorted(Food._meta.managers)
-        self.assertEqual([mgr.name for _, mgr, _ in managers],
+        self.assertEqual([mgr.name for mgr in Food._meta.managers],
                          ['default', 'food_mgr1', 'food_mgr2'])
-        self.assertTrue(all(isinstance(mgr.name, six.text_type) for _, mgr, _ in managers))
-        self.assertEqual([mgr.__class__ for _, mgr, _ in managers],
+        self.assertTrue(all(isinstance(mgr.name, six.text_type) for mgr in Food._meta.managers))
+        self.assertEqual([mgr.__class__ for mgr in Food._meta.managers],
                          [models.Manager, FoodManager, FoodManager])
-        self.assertIs(managers[0][1], Food._default_manager)
 
     def test_render_model_inheritance(self):
         class Book(models.Model):
@@ -598,8 +700,8 @@ class StateTests(SimpleTestCase):
         other_state = project_state.clone()
         self.assertEqual(project_state, project_state)
         self.assertEqual(project_state, other_state)
-        self.assertEqual(project_state != project_state, False)
-        self.assertEqual(project_state != other_state, False)
+        self.assertIs(project_state != project_state, False)
+        self.assertIs(project_state != other_state, False)
         self.assertNotEqual(project_state.apps, other_state.apps)
 
         # Make a very small change (max_len 99) and see if that affects it
@@ -616,7 +718,7 @@ class StateTests(SimpleTestCase):
             None,
         ))
         self.assertNotEqual(project_state, other_state)
-        self.assertEqual(project_state == other_state, False)
+        self.assertIs(project_state == other_state, False)
 
     def test_dangling_references_throw_error(self):
         new_apps = Apps()
@@ -662,9 +764,10 @@ class StateTests(SimpleTestCase):
         project_state = ProjectState()
         project_state.add_model(ModelState.from_model(Book))
         msg = (
-            "Unhandled pending operations for models:\n"
-            "  migrations.author (referred to by fields: migrations.Book.author)\n"
-            "  migrations.publisher (referred to by fields: migrations.Book.publisher)"
+            "The field migrations.Book.author was declared with a lazy reference "
+            "to 'migrations.author', but app 'migrations' doesn't provide model 'author'.\n"
+            "The field migrations.Book.publisher was declared with a lazy reference "
+            "to 'migrations.publisher', but app 'migrations' doesn't provide model 'publisher'."
         )
         with self.assertRaisesMessage(ValueError, msg):
             project_state.apps
@@ -673,9 +776,10 @@ class StateTests(SimpleTestCase):
         project_state = ProjectState()
         project_state.add_model(ModelState.from_model(Magazine))
         msg = (
-            "Unhandled pending operations for models:\n"
-            "  migrations.author (referred to by fields: "
-            "migrations.Magazine.authors, migrations.Magazine_authors.author)"
+            "The field migrations.Magazine.authors was declared with a lazy reference "
+            "to 'migrations.author\', but app 'migrations' doesn't provide model 'author'.\n"
+            "The field migrations.Magazine_authors.author was declared with a lazy reference "
+            "to \'migrations.author\', but app 'migrations' doesn't provide model 'author'."
         )
         with self.assertRaisesMessage(ValueError, msg):
             project_state.apps
@@ -683,10 +787,14 @@ class StateTests(SimpleTestCase):
         # And now with multiple models and multiple fields.
         project_state.add_model(ModelState.from_model(Book))
         msg = (
-            "Unhandled pending operations for models:\n"
-            "  migrations.author (referred to by fields: migrations.Book.author, "
-            "migrations.Magazine.authors, migrations.Magazine_authors.author)\n"
-            "  migrations.publisher (referred to by fields: migrations.Book.publisher)"
+            "The field migrations.Book.author was declared with a lazy reference "
+            "to 'migrations.author', but app 'migrations' doesn't provide model 'author'.\n"
+            "The field migrations.Book.publisher was declared with a lazy reference "
+            "to 'migrations.publisher', but app 'migrations' doesn't provide model 'publisher'.\n"
+            "The field migrations.Magazine.authors was declared with a lazy reference "
+            "to 'migrations.author', but app 'migrations' doesn't provide model 'author'.\n"
+            "The field migrations.Magazine_authors.author was declared with a lazy reference "
+            "to 'migrations.author', but app 'migrations' doesn't provide model 'author'."
         )
         with self.assertRaisesMessage(ValueError, msg):
             project_state.apps
@@ -817,23 +925,26 @@ class ModelStateTests(SimpleTestCase):
     def test_bound_field_sanity_check(self):
         field = models.CharField(max_length=1)
         field.model = models.Model
-        with self.assertRaisesMessage(ValueError,
-                'ModelState.fields cannot be bound to a model - "field" is.'):
+        with self.assertRaisesMessage(ValueError, 'ModelState.fields cannot be bound to a model - "field" is.'):
             ModelState('app', 'Model', [('field', field)])
 
     def test_sanity_check_to(self):
         field = models.ForeignKey(UnicodeModel, models.CASCADE)
-        with self.assertRaisesMessage(ValueError,
-                'ModelState.fields cannot refer to a model class - "field.to" does. '
-                'Use a string reference instead.'):
+        with self.assertRaisesMessage(
+            ValueError,
+            'ModelState.fields cannot refer to a model class - "field.to" does. '
+            'Use a string reference instead.'
+        ):
             ModelState('app', 'Model', [('field', field)])
 
     def test_sanity_check_through(self):
         field = models.ManyToManyField('UnicodeModel')
         field.remote_field.through = UnicodeModel
-        with self.assertRaisesMessage(ValueError,
-                'ModelState.fields cannot refer to a model class - "field.through" does. '
-                'Use a string reference instead.'):
+        with self.assertRaisesMessage(
+            ValueError,
+            'ModelState.fields cannot refer to a model class - "field.through" does. '
+            'Use a string reference instead.'
+        ):
             ModelState('app', 'Model', [('field', field)])
 
     def test_fields_immutability(self):
@@ -878,9 +989,9 @@ class ModelStateTests(SimpleTestCase):
         self.assertEqual(author_state.name, 'Author')
         self.assertEqual([x for x, y in author_state.fields], ['id', 'name', 'bio', 'age'])
         self.assertEqual(author_state.fields[1][1].max_length, 255)
-        self.assertEqual(author_state.fields[2][1].null, False)
-        self.assertEqual(author_state.fields[3][1].null, True)
-        self.assertEqual(author_state.options, {'swappable': 'TEST_SWAPPABLE_MODEL'})
+        self.assertIs(author_state.fields[2][1].null, False)
+        self.assertIs(author_state.fields[3][1].null, True)
+        self.assertEqual(author_state.options, {'swappable': 'TEST_SWAPPABLE_MODEL', 'indexes': []})
         self.assertEqual(author_state.bases, (models.Model, ))
         self.assertEqual(author_state.managers, [])
 
@@ -907,6 +1018,19 @@ class ModelStateTests(SimpleTestCase):
         # The default manager is used in migrations
         self.assertEqual([name for name, mgr in food_state.managers], ['food_mgr'])
         self.assertEqual(food_state.managers[0][1].args, ('a', 'b', 1, 2))
+
+    @isolate_apps('migrations', 'django.contrib.contenttypes')
+    def test_order_with_respect_to_private_field(self):
+        class PrivateFieldModel(models.Model):
+            content_type = models.ForeignKey('contenttypes.ContentType', models.CASCADE)
+            object_id = models.PositiveIntegerField()
+            private = GenericForeignKey()
+
+            class Meta:
+                order_with_respect_to = 'private'
+
+        state = ModelState.from_model(PrivateFieldModel)
+        self.assertNotIn('order_with_respect_to', state.options)
 
 
 class RelatedModelsTests(SimpleTestCase):

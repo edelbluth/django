@@ -70,6 +70,13 @@ class DatabaseOperations(BaseDatabaseOperations):
         # cause a collision with a field name).
         return "django_date_trunc('%s', %s)" % (lookup_type.lower(), field_name)
 
+    def time_trunc_sql(self, lookup_type, field_name):
+        # sqlite doesn't support DATE_TRUNC, so we fake it with a user-defined
+        # function django_date_trunc that's registered in connect(). Note that
+        # single quotes are used because this is a string (and could otherwise
+        # cause a collision with a field name).
+        return "django_time_trunc('%s', %s)" % (lookup_type.lower(), field_name)
+
     def _require_pytz(self):
         if settings.USE_TZ and pytz is None:
             raise ImproperlyConfigured("This query requires pytz, but it isn't installed.")
@@ -77,6 +84,10 @@ class DatabaseOperations(BaseDatabaseOperations):
     def datetime_cast_date_sql(self, field_name, tzname):
         self._require_pytz()
         return "django_datetime_cast_date(%s, %%s)" % field_name, [tzname]
+
+    def datetime_cast_time_sql(self, field_name, tzname):
+        self._require_pytz()
+        return "django_datetime_cast_time(%s, %%s)" % field_name, [tzname]
 
     def datetime_extract_sql(self, lookup_type, field_name, tzname):
         # Same comment as in date_extract_sql.
@@ -97,9 +108,6 @@ class DatabaseOperations(BaseDatabaseOperations):
         # cause a collision with a field name).
         return "django_time_extract('%s', %s)" % (lookup_type.lower(), field_name)
 
-    def drop_foreignkey_sql(self):
-        return ""
-
     def pk_default_value(self):
         return "NULL"
 
@@ -107,6 +115,19 @@ class DatabaseOperations(BaseDatabaseOperations):
         """
         Only for last_executed_query! Don't use this to execute SQL queries!
         """
+        # This function is limited both by SQLITE_LIMIT_VARIABLE_NUMBER (the
+        # number of parameters, default = 999) and SQLITE_MAX_COLUMN (the
+        # number of return values, default = 2000). Since Python's sqlite3
+        # module doesn't expose the get_limit() C API, assume the default
+        # limits are in effect and split the work in batches if needed.
+        BATCH_SIZE = 999
+        if len(params) > BATCH_SIZE:
+            results = ()
+            for index in range(0, len(params), BATCH_SIZE):
+                chunk = params[index:index + BATCH_SIZE]
+                results += self._quote_params_for_last_executed_query(chunk)
+            return results
+
         sql = 'SELECT ' + ', '.join(['QUOTE(?)'] * len(params))
         # Bypass Django's wrappers and use the underlying sqlite3 connection
         # to avoid logging this query - it would trigger infinite recursion.
@@ -250,3 +271,10 @@ class DatabaseOperations(BaseDatabaseOperations):
     def integer_field_range(self, internal_type):
         # SQLite doesn't enforce any integer constraints
         return (None, None)
+
+    def subtract_temporals(self, internal_type, lhs, rhs):
+        lhs_sql, lhs_params = lhs
+        rhs_sql, rhs_params = rhs
+        if internal_type == 'TimeField':
+            return "django_time_diff(%s, %s)" % (lhs_sql, rhs_sql), lhs_params + rhs_params
+        return "django_timestamp_diff(%s, %s)" % (lhs_sql, rhs_sql), lhs_params + rhs_params

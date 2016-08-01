@@ -35,15 +35,16 @@ from .models import (
     InlineReference, InlineReferer, Inquisition, Language, Link,
     MainPrepopulated, ModelWithStringPrimaryKey, NotReferenced, OldSubscriber,
     OtherStory, Paper, Parent, ParentWithDependentChildren, ParentWithUUIDPK,
-    Person, Persona, Picture, Pizza, Plot, PlotDetails, PluggableSearchPerson,
-    Podcast, Post, PrePopulatedPost, PrePopulatedPostLargeSlug,
-    PrePopulatedSubPost, Promo, Question, Recipe, Recommendation, Recommender,
-    ReferencedByGenRel, ReferencedByInline, ReferencedByParent,
-    RelatedPrepopulated, RelatedWithUUIDPKModel, Report, Reservation,
-    Restaurant, RowLevelChangePermissionModel, Section, ShortMessage, Simple,
-    Sketch, State, Story, StumpJoke, Subscriber, SuperVillain, Telegram, Thing,
-    Topping, UnchangeableObject, UndeletableObject, UnorderedObject,
-    UserMessenger, Villain, Vodcast, Whatsit, Widget, Worker, WorkHour,
+    Person, Persona, Picture, Pizza, Plot, PlotDetails, PlotProxy,
+    PluggableSearchPerson, Podcast, Post, PrePopulatedPost,
+    PrePopulatedPostLargeSlug, PrePopulatedSubPost, Promo, Question, Recipe,
+    Recommendation, Recommender, ReferencedByGenRel, ReferencedByInline,
+    ReferencedByParent, RelatedPrepopulated, RelatedWithUUIDPKModel, Report,
+    Reservation, Restaurant, RowLevelChangePermissionModel, Section,
+    ShortMessage, Simple, Sketch, State, Story, StumpJoke, Subscriber,
+    SuperVillain, Telegram, Thing, Topping, UnchangeableObject,
+    UndeletableObject, UnorderedObject, UserMessenger, Villain, Vodcast,
+    Whatsit, Widget, Worker, WorkHour,
 )
 
 
@@ -89,7 +90,7 @@ class ChapterXtra1Admin(admin.ModelAdmin):
 class ArticleAdmin(admin.ModelAdmin):
     list_display = (
         'content', 'date', callable_year, 'model_year', 'modeladmin_year',
-        'model_year_reversed', 'section',
+        'model_year_reversed', 'section', lambda obj: obj.title,
     )
     list_editable = ('section',)
     list_filter = ('date', 'section')
@@ -207,8 +208,7 @@ class PersonAdmin(admin.ModelAdmin):
     save_as = True
 
     def get_changelist_formset(self, request, **kwargs):
-        return super(PersonAdmin, self).get_changelist_formset(request,
-            formset=BasePersonModelFormSet, **kwargs)
+        return super(PersonAdmin, self).get_changelist_formset(request, formset=BasePersonModelFormSet, **kwargs)
 
     def get_queryset(self, request):
         # Order by a field that isn't in list display, to be able to test
@@ -481,7 +481,7 @@ class FieldOverridePostAdmin(PostAdmin):
 
 class CustomChangeList(ChangeList):
     def get_queryset(self, request):
-        return self.root_queryset.filter(pk=9999)  # Does not exist
+        return self.root_queryset.order_by('pk').filter(pk=9999)  # Doesn't exist
 
 
 class GadgetAdmin(admin.ModelAdmin):
@@ -866,6 +866,10 @@ class InlineRefererAdmin(admin.ModelAdmin):
     inlines = [InlineReferenceInline]
 
 
+class PlotReadonlyAdmin(admin.ModelAdmin):
+    readonly_fields = ('plotdetails',)
+
+
 class GetFormsetsArgumentCheckingAdmin(admin.ModelAdmin):
     fields = ['name']
 
@@ -920,6 +924,7 @@ site.register(Villain)
 site.register(SuperVillain)
 site.register(Plot)
 site.register(PlotDetails)
+site.register(PlotProxy, PlotReadonlyAdmin)
 site.register(Bookmark)
 site.register(CyclicOne)
 site.register(CyclicTwo)
@@ -968,7 +973,7 @@ site.register(Pizza, PizzaAdmin)
 site.register(Topping, ToppingAdmin)
 site.register(Album, AlbumAdmin)
 site.register(Question)
-site.register(Answer)
+site.register(Answer, date_hierarchy='question__posted')
 site.register(PrePopulatedPost, PrePopulatedPostAdmin)
 site.register(ComplexSortedPerson, ComplexSortedPersonAdmin)
 site.register(FilteredManager, CustomManagerAdmin)
@@ -1001,5 +1006,14 @@ site.register(Group, GroupAdmin)
 site2 = admin.AdminSite(name="namespaced_admin")
 site2.register(User, UserAdmin)
 site2.register(Group, GroupAdmin)
+site2.register(ParentWithUUIDPK)
+site2.register(
+    RelatedWithUUIDPKModel,
+    list_display=['pk', 'parent'],
+    list_editable=['parent'],
+    raw_id_fields=['parent'],
+)
+site2.register(Person, save_as_continue=False)
+
 site7 = admin.AdminSite(name="admin7")
 site7.register(Article, ArticleAdmin2)

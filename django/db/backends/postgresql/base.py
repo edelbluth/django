@@ -35,14 +35,14 @@ if PSYCOPG2_VERSION < (2, 4, 5):
 
 
 # Some of these import psycopg2, so import them after checking if it's installed.
-from .client import DatabaseClient                          # isort:skip
-from .creation import DatabaseCreation                      # isort:skip
-from .features import DatabaseFeatures                      # isort:skip
-from .introspection import DatabaseIntrospection            # isort:skip
-from .operations import DatabaseOperations                  # isort:skip
-from .schema import DatabaseSchemaEditor                    # isort:skip
-from .utils import utc_tzinfo_factory                       # isort:skip
-from .version import get_version                            # isort:skip
+from .client import DatabaseClient                          # NOQA isort:skip
+from .creation import DatabaseCreation                      # NOQA isort:skip
+from .features import DatabaseFeatures                      # NOQA isort:skip
+from .introspection import DatabaseIntrospection            # NOQA isort:skip
+from .operations import DatabaseOperations                  # NOQA isort:skip
+from .schema import DatabaseSchemaEditor                    # NOQA isort:skip
+from .utils import utc_tzinfo_factory                       # NOQA isort:skip
+from .version import get_version                            # NOQA isort:skip
 
 DatabaseError = Database.DatabaseError
 IntegrityError = Database.IntegrityError
@@ -192,17 +192,21 @@ class DatabaseWrapper(BaseDatabaseWrapper):
 
         return connection
 
+    def ensure_timezone(self):
+        self.ensure_connection()
+        conn_timezone_name = self.connection.get_parameter_status('TimeZone')
+        timezone_name = self.timezone_name
+        if timezone_name and conn_timezone_name != timezone_name:
+            with self.connection.cursor() as cursor:
+                cursor.execute(self.ops.set_time_zone_sql(), [timezone_name])
+            return True
+        return False
+
     def init_connection_state(self):
         self.connection.set_client_encoding('UTF8')
 
-        conn_timezone_name = self.connection.get_parameter_status('TimeZone')
-
-        if conn_timezone_name != self.timezone_name:
-            cursor = self.connection.cursor()
-            try:
-                cursor.execute(self.ops.set_time_zone_sql(), [self.timezone_name])
-            finally:
-                cursor.close()
+        timezone_changed = self.ensure_timezone()
+        if timezone_changed:
             # Commit after setting the time zone (see #17062)
             if not self.get_autocommit():
                 self.connection.commit()

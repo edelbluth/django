@@ -1,8 +1,7 @@
 from django.contrib.admin import ModelAdmin
 from django.contrib.gis.admin.widgets import OpenLayersWidget
 from django.contrib.gis.db import models
-from django.contrib.gis.gdal import HAS_GDAL, OGRGeomType
-from django.core.exceptions import ImproperlyConfigured
+from django.contrib.gis.gdal import OGRGeomType
 
 spherical_mercator_srid = 3857
 
@@ -134,8 +133,3 @@ class OSMGeoAdmin(GeoModelAdmin):
     max_resolution = '156543.0339'
     point_zoom = num_zoom - 6
     units = 'm'
-
-    def __init__(self, *args):
-        if not HAS_GDAL:
-            raise ImproperlyConfigured("OSMGeoAdmin is not usable without GDAL libs installed")
-        super(OSMGeoAdmin, self).__init__(*args)

@@ -12,7 +12,8 @@ class DatabaseOperations(BaseDatabaseOperations):
     compiler_module = "django.db.backends.mysql.compiler"
 
     # MySQL stores positive fields as UNSIGNED ints.
-    integer_field_ranges = dict(BaseDatabaseOperations.integer_field_ranges,
+    integer_field_ranges = dict(
+        BaseDatabaseOperations.integer_field_ranges,
         PositiveSmallIntegerField=(0, 65535),
         PositiveIntegerField=(0, 4294967295),
     )
@@ -50,6 +51,11 @@ class DatabaseOperations(BaseDatabaseOperations):
         sql = "DATE(%s)" % field_name
         return sql, params
 
+    def datetime_cast_time_sql(self, field_name, tzname):
+        field_name, params = self._convert_field_to_tz(field_name, tzname)
+        sql = "TIME(%s)" % field_name
+        return sql, params
+
     def datetime_extract_sql(self, lookup_type, field_name, tzname):
         field_name, params = self._convert_field_to_tz(field_name, tzname)
         sql = self.date_extract_sql(lookup_type, field_name)
@@ -69,6 +75,18 @@ class DatabaseOperations(BaseDatabaseOperations):
             sql = "CAST(DATE_FORMAT(%s, '%s') AS DATETIME)" % (field_name, format_str)
         return sql, params
 
+    def time_trunc_sql(self, lookup_type, field_name):
+        fields = {
+            'hour': '%%H:00:00',
+            'minute': '%%H:%%i:00',
+            'second': '%%H:%%i:%%s',
+        }  # Use double percents to escape.
+        if lookup_type in fields:
+            format_str = fields[lookup_type]
+            return "CAST(DATE_FORMAT(%s, '%s') AS TIME)" % (field_name, format_str)
+        else:
+            return "TIME(%s)" % (field_name)
+
     def date_interval_sql(self, timedelta):
         return "INTERVAL '%d 0:0:%d:%d' DAY_MICROSECOND" % (
             timedelta.days, timedelta.seconds, timedelta.microseconds), []
@@ -79,9 +97,6 @@ class DatabaseOperations(BaseDatabaseOperations):
         else:
             return 'INTERVAL FLOOR(%s / 1000000) SECOND' % sql
 
-    def drop_foreignkey_sql(self):
-        return "DROP FOREIGN KEY"
-
     def force_no_ordering(self):
         """
         "ORDER BY NULL" prevents MySQL from implicitly ordering by grouped
@@ -91,6 +106,7 @@ class DatabaseOperations(BaseDatabaseOperations):
         return [(None, ("NULL", [], False))]
 
     def fulltext_search_sql(self, field_name):
+        # RemovedInDjango20Warning
         return 'MATCH (%s) AGAINST (%%s IN BOOLEAN MODE)' % field_name
 
     def last_executed_query(self, cursor, sql, params):
@@ -210,3 +226,24 @@ class DatabaseOperations(BaseDatabaseOperations):
         if value is not None:
             value = uuid.UUID(value)
         return value
+
+    def binary_placeholder_sql(self, value):
+        return '_binary %s' if value is not None else '%s'
+
+    def subtract_temporals(self, internal_type, lhs, rhs):
+        lhs_sql, lhs_params = lhs
+        rhs_sql, rhs_params = rhs
+        if self.connection.features.supports_microsecond_precision:
+            if internal_type == 'TimeField':
+                return (
+                    "((TIME_TO_SEC(%(lhs)s) * POW(10, 6) + MICROSECOND(%(lhs)s)) -"
+                    " (TIME_TO_SEC(%(rhs)s) * POW(10, 6) + MICROSECOND(%(rhs)s)))"
+                ) % {'lhs': lhs_sql, 'rhs': rhs_sql}, lhs_params * 2 + rhs_params * 2
+            else:
+                return "TIMESTAMPDIFF(MICROSECOND, %s, %s)" % (rhs_sql, lhs_sql), rhs_params + lhs_params
+        elif internal_type == 'TimeField':
+            return (
+                "(TIME_TO_SEC(%s) * POW(10, 6) - TIME_TO_SEC(%s) * POW(10, 6))"
+            ) % (lhs_sql, rhs_sql), lhs_params + rhs_params
+        else:
+            return "(TIMESTAMPDIFF(SECOND, %s, %s) * POW(10, 6))" % (rhs_sql, lhs_sql), rhs_params + lhs_params

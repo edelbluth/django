@@ -9,6 +9,7 @@ from admin_scripts.tests import AdminScriptTestCase
 from django.conf import settings
 from django.core import mail
 from django.core.files.temp import NamedTemporaryFile
+from django.db import connection
 from django.test import RequestFactory, SimpleTestCase, override_settings
 from django.test.utils import LoggingCaptureMixin, patch_logger
 from django.utils.deprecation import RemovedInNextVersionWarning
@@ -47,10 +48,10 @@ class LoggingFiltersTest(SimpleTestCase):
         filter_ = RequireDebugFalse()
 
         with self.settings(DEBUG=True):
-            self.assertEqual(filter_.filter("record is not used"), False)
+            self.assertIs(filter_.filter("record is not used"), False)
 
         with self.settings(DEBUG=False):
-            self.assertEqual(filter_.filter("record is not used"), True)
+            self.assertIs(filter_.filter("record is not used"), True)
 
     def test_require_debug_true_filter(self):
         """
@@ -59,24 +60,27 @@ class LoggingFiltersTest(SimpleTestCase):
         filter_ = RequireDebugTrue()
 
         with self.settings(DEBUG=True):
-            self.assertEqual(filter_.filter("record is not used"), True)
+            self.assertIs(filter_.filter("record is not used"), True)
 
         with self.settings(DEBUG=False):
-            self.assertEqual(filter_.filter("record is not used"), False)
+            self.assertIs(filter_.filter("record is not used"), False)
 
 
-class DefaultLoggingTest(LoggingCaptureMixin, SimpleTestCase):
+class SetupDefaultLoggingMixin(object):
 
     @classmethod
     def setUpClass(cls):
-        super(DefaultLoggingTest, cls).setUpClass()
+        super(SetupDefaultLoggingMixin, cls).setUpClass()
         cls._logging = settings.LOGGING
         logging.config.dictConfig(DEFAULT_LOGGING)
 
     @classmethod
     def tearDownClass(cls):
-        super(DefaultLoggingTest, cls).tearDownClass()
+        super(SetupDefaultLoggingMixin, cls).tearDownClass()
         logging.config.dictConfig(cls._logging)
+
+
+class DefaultLoggingTests(SetupDefaultLoggingMixin, LoggingCaptureMixin, SimpleTestCase):
 
     def test_django_logger(self):
         """
@@ -89,20 +93,55 @@ class DefaultLoggingTest(LoggingCaptureMixin, SimpleTestCase):
             self.logger.error("Hey, this is an error.")
             self.assertEqual(self.logger_output.getvalue(), 'Hey, this is an error.\n')
 
+    @override_settings(DEBUG=True)
     def test_django_logger_warning(self):
-        with self.settings(DEBUG=True):
-            self.logger.warning('warning')
-            self.assertEqual(self.logger_output.getvalue(), 'warning\n')
+        self.logger.warning('warning')
+        self.assertEqual(self.logger_output.getvalue(), 'warning\n')
 
+    @override_settings(DEBUG=True)
     def test_django_logger_info(self):
-        with self.settings(DEBUG=True):
-            self.logger.info('info')
-            self.assertEqual(self.logger_output.getvalue(), 'info\n')
+        self.logger.info('info')
+        self.assertEqual(self.logger_output.getvalue(), 'info\n')
 
+    @override_settings(DEBUG=True)
     def test_django_logger_debug(self):
-        with self.settings(DEBUG=True):
-            self.logger.debug('debug')
-            self.assertEqual(self.logger_output.getvalue(), '')
+        self.logger.debug('debug')
+        self.assertEqual(self.logger_output.getvalue(), '')
+
+
+@override_settings(DEBUG=True, ROOT_URLCONF='logging_tests.urls')
+class HandlerLoggingTests(SetupDefaultLoggingMixin, LoggingCaptureMixin, SimpleTestCase):
+
+    def test_page_found_no_warning(self):
+        self.client.get('/innocent/')
+        self.assertEqual(self.logger_output.getvalue(), '')
+
+    def test_page_not_found_warning(self):
+        self.client.get('/does_not_exist/')
+        self.assertEqual(self.logger_output.getvalue(), 'Not Found: /does_not_exist/\n')
+
+
+@override_settings(
+    DEBUG=True,
+    USE_I18N=True,
+    LANGUAGES=[('en', 'English')],
+    MIDDLEWARE=[
+        'django.middleware.locale.LocaleMiddleware',
+        'django.middleware.common.CommonMiddleware',
+    ],
+    ROOT_URLCONF='logging_tests.urls_i18n',
+)
+class I18nLoggingTests(SetupDefaultLoggingMixin, LoggingCaptureMixin, SimpleTestCase):
+
+    def test_i18n_page_found_no_warning(self):
+        self.client.get('/exists/')
+        self.client.get('/en/exists/')
+        self.assertEqual(self.logger_output.getvalue(), '')
+
+    def test_i18n_page_not_found_warning(self):
+        self.client.get('/this_does_not/')
+        self.client.get('/en/nor_this/')
+        self.assertEqual(self.logger_output.getvalue(), 'Not Found: /this_does_not/\nNot Found: /en/nor_this/\n')
 
 
 class WarningLoggerTests(SimpleTestCase):
@@ -222,7 +261,8 @@ class AdminEmailHandlerTest(SimpleTestCase):
             admin_email_handler.filters = []
             rf = RequestFactory()
             request = rf.get('/')
-            self.logger.error(message, token1, token2,
+            self.logger.error(
+                message, token1, token2,
                 extra={
                     'status_code': 403,
                     'request': request,
@@ -257,28 +297,6 @@ class AdminEmailHandlerTest(SimpleTestCase):
         self.assertEqual(len(mail.outbox), 1)
         self.assertNotIn('\n', mail.outbox[0].subject)
         self.assertNotIn('\r', mail.outbox[0].subject)
-        self.assertEqual(mail.outbox[0].subject, expected_subject)
-
-    @override_settings(
-        ADMINS=(('admin', 'admin@example.com'),),
-        EMAIL_SUBJECT_PREFIX='',
-        DEBUG=False,
-    )
-    def test_truncate_subject(self):
-        """
-        RFC 2822's hard limit is 998 characters per line.
-        So, minus "Subject: ", the actual subject must be no longer than 989
-        characters.
-        Refs #17281.
-        """
-        message = 'a' * 1000
-        expected_subject = 'ERROR: aa' + 'a' * 980
-
-        self.assertEqual(len(mail.outbox), 0)
-
-        self.logger.error(message)
-
-        self.assertEqual(len(mail.outbox), 1)
         self.assertEqual(mail.outbox[0].subject, expected_subject)
 
     @override_settings(
@@ -475,3 +493,23 @@ format=%(message)s
         out, err = self.run_manage(['check'])
         self.assertNoOutput(err)
         self.assertOutput(out, "System check identified no issues (0 silenced).")
+
+
+class SchemaLoggerTests(SimpleTestCase):
+
+    def test_extra_args(self):
+        editor = connection.schema_editor(collect_sql=True)
+        sql = "SELECT * FROM foo WHERE id in (%s, %s)"
+        params = [42, 1337]
+        with patch_logger('django.db.backends.schema', 'debug', log_kwargs=True) as logger:
+            editor.execute(sql, params)
+        self.assertEqual(
+            logger,
+            [(
+                'SELECT * FROM foo WHERE id in (%s, %s); (params [42, 1337])',
+                {'extra': {
+                    'sql': 'SELECT * FROM foo WHERE id in (%s, %s)',
+                    'params': [42, 1337],
+                }},
+            )]
+        )

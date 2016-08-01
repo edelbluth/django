@@ -1,4 +1,3 @@
-import logging
 import re
 
 from django import http
@@ -6,15 +5,16 @@ from django.conf import settings
 from django.core.exceptions import PermissionDenied
 from django.core.mail import mail_managers
 from django.urls import is_valid_path
-from django.utils.cache import get_conditional_response, set_response_etag
+from django.utils.cache import (
+    cc_delim_re, get_conditional_response, set_response_etag,
+)
+from django.utils.deprecation import MiddlewareMixin
 from django.utils.encoding import force_text
 from django.utils.http import unquote_etag
 from django.utils.six.moves.urllib.parse import urlparse
 
-logger = logging.getLogger('django.request')
 
-
-class CommonMiddleware(object):
+class CommonMiddleware(MiddlewareMixin):
     """
     "Common" middleware for taking care of some basic operations:
 
@@ -54,18 +54,19 @@ class CommonMiddleware(object):
 
         # Check for a redirect based on settings.PREPEND_WWW
         host = request.get_host()
+        must_prepend = settings.PREPEND_WWW and host and not host.startswith('www.')
+        redirect_url = ('%s://www.%s' % (request.scheme, host)) if must_prepend else ''
 
-        if settings.PREPEND_WWW and host and not host.startswith('www.'):
-            host = 'www.' + host
+        # Check if a slash should be appended
+        if self.should_redirect_with_slash(request):
+            path = self.get_full_path_with_slash(request)
+        else:
+            path = request.get_full_path()
 
-            # Check if we also need to append a slash so we can do it all
-            # with a single redirect.
-            if self.should_redirect_with_slash(request):
-                path = self.get_full_path_with_slash(request)
-            else:
-                path = request.get_full_path()
-
-            return self.response_redirect_class('%s://%s%s' % (request.scheme, host, path))
+        # Return a redirect if necessary
+        if redirect_url or path != request.get_full_path():
+            redirect_url += path
+            return self.response_redirect_class(redirect_url)
 
     def should_redirect_with_slash(self, request):
         """
@@ -75,8 +76,8 @@ class CommonMiddleware(object):
         if settings.APPEND_SLASH and not request.get_full_path().endswith('/'):
             urlconf = getattr(request, 'urlconf', None)
             return (
-                not is_valid_path(request.path_info, urlconf)
-                and is_valid_path('%s/' % request.path_info, urlconf)
+                not is_valid_path(request.path_info, urlconf) and
+                is_valid_path('%s/' % request.path_info, urlconf)
             )
         return False
 
@@ -85,7 +86,7 @@ class CommonMiddleware(object):
         Return the full path of the request with a trailing slash appended.
 
         Raise a RuntimeError if settings.DEBUG is True and request.method is
-        GET, PUT, or PATCH.
+        POST, PUT, or PATCH.
         """
         new_path = request.get_full_path(force_append_slash=True)
         if settings.DEBUG and request.method in ('POST', 'PUT', 'PATCH'):
@@ -114,7 +115,7 @@ class CommonMiddleware(object):
             if self.should_redirect_with_slash(request):
                 return self.response_redirect_class(self.get_full_path_with_slash(request))
 
-        if settings.USE_ETAGS:
+        if settings.USE_ETAGS and self.needs_etag(response):
             if not response.has_header('ETag'):
                 set_response_etag(response)
 
@@ -124,11 +125,22 @@ class CommonMiddleware(object):
                     etag=unquote_etag(response['ETag']),
                     response=response,
                 )
+        # Add the Content-Length header to non-streaming responses if not
+        # already set.
+        if not response.streaming and not response.has_header('Content-Length'):
+            response['Content-Length'] = str(len(response.content))
 
         return response
 
+    def needs_etag(self, response):
+        """
+        Return True if an ETag header should be added to response.
+        """
+        cache_control_headers = cc_delim_re.split(response.get('Cache-Control', ''))
+        return all(header.lower() != 'no-store' for header in cache_control_headers)
 
-class BrokenLinkEmailsMiddleware(object):
+
+class BrokenLinkEmailsMiddleware(MiddlewareMixin):
 
     def process_response(self, request, response):
         """
@@ -162,18 +174,24 @@ class BrokenLinkEmailsMiddleware(object):
     def is_ignorable_request(self, request, uri, domain, referer):
         """
         Return True if the given request *shouldn't* notify the site managers
-        according to project settings or in three specific situations:
-         - If the referer is empty.
-         - If a '?' in referer is identified as a search engine source.
-         - If the referer is equal to the current URL, ignoring the scheme
-           (assumed to be a poorly implemented bot).
+        according to project settings or in situations outlined by the inline
+        comments.
         """
+        # The referer is empty.
         if not referer:
             return True
 
+        # APPEND_SLASH is enabled and the referer is equal to the current URL
+        # without a trailing slash indicating an internal redirect.
+        if settings.APPEND_SLASH and uri.endswith('/') and referer == uri[:-1]:
+            return True
+
+        # A '?' in referer is identified as a search engine source.
         if not self.is_internal_request(domain, referer) and '?' in referer:
             return True
 
+        # The referer is equal to the current URL, ignoring the scheme (assumed
+        # to be a poorly implemented bot).
         parsed_referer = urlparse(referer)
         if parsed_referer.netloc in ['', domain] and parsed_referer.path == uri:
             return True

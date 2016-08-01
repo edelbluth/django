@@ -11,11 +11,10 @@ from django.forms.utils import flatatt
 from django.forms.widgets import RadioFieldRenderer
 from django.template.loader import render_to_string
 from django.urls import reverse
+from django.urls.exceptions import NoReverseMatch
 from django.utils import six
 from django.utils.encoding import force_text
-from django.utils.html import (
-    escape, format_html, format_html_join, smart_urlquote,
-)
+from django.utils.html import format_html, format_html_join, smart_urlquote
 from django.utils.safestring import mark_safe
 from django.utils.text import Truncator
 from django.utils.translation import ugettext as _
@@ -38,7 +37,7 @@ class FilteredSelectMultiple(forms.SelectMultiple):
         self.is_stacked = is_stacked
         super(FilteredSelectMultiple, self).__init__(attrs, choices)
 
-    def render(self, name, value, attrs=None, choices=()):
+    def render(self, name, value, attrs=None):
         if attrs is None:
             attrs = {}
         attrs['class'] = 'selectfilter'
@@ -47,7 +46,7 @@ class FilteredSelectMultiple(forms.SelectMultiple):
 
         attrs['data-field-name'] = self.verbose_name
         attrs['data-is-stacked'] = int(self.is_stacked)
-        output = super(FilteredSelectMultiple, self).render(name, value, attrs, choices)
+        output = super(FilteredSelectMultiple, self).render(name, value, attrs)
         return mark_safe(output)
 
 
@@ -107,10 +106,12 @@ class AdminRadioSelect(forms.RadioSelect):
 
 
 class AdminFileWidget(forms.ClearableFileInput):
-    template_with_initial = ('<p class="file-upload">%s</p>'
-                            % forms.ClearableFileInput.template_with_initial)
-    template_with_clear = ('<span class="clearable-file-input">%s</span>'
-                           % forms.ClearableFileInput.template_with_clear)
+    template_with_initial = (
+        '<p class="file-upload">%s</p>' % forms.ClearableFileInput.template_with_initial
+    )
+    template_with_clear = (
+        '<span class="clearable-file-input">%s</span>' % forms.ClearableFileInput.template_with_clear
+    )
 
 
 def url_params_from_lookup_dict(lookups):
@@ -127,7 +128,6 @@ def url_params_from_lookup_dict(lookups):
             if isinstance(v, (tuple, list)):
                 v = ','.join(str(x) for x in v)
             elif isinstance(v, bool):
-                # See django.db.fields.BooleanField.get_prep_lookup
                 v = ('0', '1')[v]
             else:
                 v = six.text_type(v)
@@ -171,8 +171,10 @@ class ForeignKeyRawIdWidget(forms.TextInput):
                 attrs['class'] = 'vForeignKeyRawIdAdminField'  # The JavaScript code looks for this hook.
             # TODO: "lookup_id_" is hard-coded here. This should instead use
             # the correct API to determine the ID dynamically.
-            extra.append('<a href="%s%s" class="related-lookup" id="lookup_id_%s" title="%s"></a>' %
-                (related_url, url, name, _('Lookup')))
+            extra.append(
+                '<a href="%s%s" class="related-lookup" id="lookup_id_%s" title="%s"></a>'
+                % (related_url, url, name, _('Lookup'))
+            )
         output = [super(ForeignKeyRawIdWidget, self).render(name, value, attrs)] + extra
         if value:
             output.append(self.label_for_value(value))
@@ -194,9 +196,26 @@ class ForeignKeyRawIdWidget(forms.TextInput):
         key = self.rel.get_related_field().name
         try:
             obj = self.rel.model._default_manager.using(self.db).get(**{key: value})
-            return '&nbsp;<strong>%s</strong>' % escape(Truncator(obj).words(14, truncate='...'))
         except (ValueError, self.rel.model.DoesNotExist):
             return ''
+
+        label = '&nbsp;<strong>{}</strong>'
+        text = Truncator(obj).words(14, truncate='...')
+        try:
+            change_url = reverse(
+                '%s:%s_%s_change' % (
+                    self.admin_site.name,
+                    obj._meta.app_label,
+                    obj._meta.object_name.lower(),
+                ),
+                args=(obj.pk,)
+            )
+        except NoReverseMatch:
+            pass  # Admin not registered for target model.
+        else:
+            text = format_html('<a href="{}">{}</a>', change_url, text)
+
+        return format_html(label, text)
 
 
 class ManyToManyRawIdWidget(ForeignKeyRawIdWidget):
@@ -356,7 +375,7 @@ class AdminURLFieldWidget(forms.URLInput):
     def render(self, name, value, attrs=None):
         html = super(AdminURLFieldWidget, self).render(name, value, attrs)
         if value:
-            value = force_text(self._format_value(value))
+            value = force_text(self.format_value(value))
             final_attrs = {'href': smart_urlquote(value)}
             html = format_html(
                 '<p class="url">{} <a{}>{}</a><br />{} {}</p>',
@@ -378,11 +397,3 @@ class AdminIntegerFieldWidget(forms.TextInput):
 
 class AdminBigIntegerFieldWidget(AdminIntegerFieldWidget):
     class_name = 'vBigIntegerField'
-
-
-class AdminCommaSeparatedIntegerFieldWidget(forms.TextInput):
-    def __init__(self, attrs=None):
-        final_attrs = {'class': 'vCommaSeparatedIntegerField'}
-        if attrs is not None:
-            final_attrs.update(attrs)
-        super(AdminCommaSeparatedIntegerFieldWidget, self).__init__(attrs=final_attrs)

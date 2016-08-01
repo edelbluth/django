@@ -22,7 +22,7 @@ class DeserializationError(Exception):
     def WithData(cls, original_exc, model, fk, field_value):
         """
         Factory method for creating a deserialization error which has a more
-        explanatory messsage.
+        explanatory message.
         """
         return cls("%s: (%s:pk=%s) field_value was '%s'" % (original_exc, model, fk, field_value))
 
@@ -59,6 +59,7 @@ class Serializer(object):
     # internal Django use.
     internal_use_only = False
     progress_class = ProgressBar
+    stream_class = six.StringIO
 
     def serialize(self, queryset, **options):
         """
@@ -66,7 +67,7 @@ class Serializer(object):
         """
         self.options = options
 
-        self.stream = options.pop("stream", six.StringIO())
+        self.stream = options.pop("stream", self.stream_class())
         self.selected_fields = options.pop("fields", None)
         self.use_natural_foreign_keys = options.pop('use_natural_foreign_keys', False)
         self.use_natural_primary_keys = options.pop('use_natural_primary_keys', False)

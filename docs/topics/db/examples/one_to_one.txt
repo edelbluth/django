@@ -1,8 +1,9 @@
-########################
+========================
 One-to-one relationships
-########################
+========================
 
-To define a one-to-one relationship, use :ref:`ref-onetoone`.
+To define a one-to-one relationship, use
+:class:`~django.db.models.OneToOneField`.
 
 In this example, a ``Place`` optionally can be a ``Restaurant``::
 
@@ -139,7 +140,6 @@ This of course works in reverse::
 Add a Waiter to the Restaurant::
 
     >>> w = r.waiter_set.create(name='Joe')
-    >>> w.save()
     >>> w
     <Waiter: Joe the waiter at Demon Dogs the restaurant>
 

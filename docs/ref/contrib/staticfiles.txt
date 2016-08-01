@@ -1,6 +1,6 @@
-===================
-The staticfiles app
-===================
+=======================
+The ``staticfiles`` app
+=======================
 
 .. module:: django.contrib.staticfiles
    :synopsis: An app for handling static files.
@@ -34,8 +34,8 @@ Management Commands
 
 ``django.contrib.staticfiles`` exposes three management commands.
 
-collectstatic
--------------
+``collectstatic``
+-----------------
 
 .. django-admin:: collectstatic
 
@@ -92,10 +92,6 @@ Some commonly used options are:
 
     Do NOT prompt the user for input of any kind.
 
-    .. versionchanged:: 1.9
-
-        The ``--no-input`` alias was added.
-
 .. django-admin-option:: --ignore PATTERN, -i PATTERN
 
     Ignore files or directories matching this glob-style pattern. Use multiple
@@ -128,10 +124,31 @@ For a full list of options, refer to the commands own help by running::
 
    $ python manage.py collectstatic --help
 
-findstatic
-----------
+.. _customize-staticfiles-ignore-patterns:
 
-.. django-admin:: findstatic static file [static file ...]
+Customizing the ignored pattern list
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+.. versionadded:: 1.10
+
+The default ignored pattern list, ``['CVS', '.*', '*~']``, can be customized in
+a more persistent way than providing the ``--ignore`` command option at each
+``collectstatic`` invocation. Provide a custom :class:`~django.apps.AppConfig`
+class, override the ``ignore_patterns`` attribute of this class and replace
+``'django.contrib.staticfiles'`` with that class path in your
+:setting:`INSTALLED_APPS` setting:
+
+.. code-block:: python
+
+    from django.contrib.staticfiles.apps import StaticFilesConfig
+
+    class MyStaticFilesConfig(StaticFilesConfig):
+        ignore_patterns = [...]  # your custom ignore list
+
+``findstatic``
+--------------
+
+.. django-admin:: findstatic staticfile [staticfile ...]
 
 Searches for one or more relative paths with the enabled finders.
 
@@ -177,8 +194,8 @@ the directories which were searched::
 
 .. _staticfiles-runserver:
 
-runserver
----------
+``runserver``
+-------------
 
 .. django-admin:: runserver [addrport]
 
@@ -218,8 +235,8 @@ Example usage::
 Storages
 ========
 
-StaticFilesStorage
-------------------
+``StaticFilesStorage``
+----------------------
 
 .. class:: storage.StaticFilesStorage
 
@@ -238,8 +255,8 @@ The :class:`~django.contrib.staticfiles.storage.CachedStaticFilesStorage`
 uses this behind the scenes to replace the paths with their hashed
 counterparts and update the cache appropriately.
 
-ManifestStaticFilesStorage
---------------------------
+``ManifestStaticFilesStorage``
+------------------------------
 
 .. class:: storage.ManifestStaticFilesStorage
 
@@ -317,8 +334,8 @@ hashing algorithm.
 .. _`url()`: http://www.w3.org/TR/CSS2/syndata.html#uri
 .. _`Cascading Style Sheets`: http://www.w3.org/Style/CSS/
 
-CachedStaticFilesStorage
-------------------------
+``CachedStaticFilesStorage``
+----------------------------
 
 .. class:: storage.CachedStaticFilesStorage
 

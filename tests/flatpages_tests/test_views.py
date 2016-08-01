@@ -40,7 +40,7 @@ class TestDataMixin(object):
 @modify_settings(INSTALLED_APPS={'append': 'django.contrib.flatpages'})
 @override_settings(
     LOGIN_URL='/accounts/login/',
-    MIDDLEWARE_CLASSES=[
+    MIDDLEWARE=[
         'django.middleware.common.CommonMiddleware',
         'django.contrib.sessions.middleware.SessionMiddleware',
         'django.middleware.csrf.CsrfViewMiddleware',
@@ -68,8 +68,8 @@ class FlatpageViewTests(TestDataMixin, TestCase):
         "A flatpage served through a view can require authentication"
         response = self.client.get('/flatpage_root/sekrit/')
         self.assertRedirects(response, '/accounts/login/?next=/flatpage_root/sekrit/')
-        User.objects.create_user('testuser', 'test@example.com', 's3krit')
-        self.client.login(username='testuser', password='s3krit')
+        user = User.objects.create_user('testuser', 'test@example.com', 's3krit')
+        self.client.force_login(user)
         response = self.client.get('/flatpage_root/sekrit/')
         self.assertContains(response, "<p>Isn't it sekrit!</p>")
 
@@ -102,7 +102,7 @@ class FlatpageViewTests(TestDataMixin, TestCase):
 @override_settings(
     APPEND_SLASH=True,
     LOGIN_URL='/accounts/login/',
-    MIDDLEWARE_CLASSES=[
+    MIDDLEWARE=[
         'django.middleware.common.CommonMiddleware',
         'django.contrib.sessions.middleware.SessionMiddleware',
         'django.middleware.csrf.CsrfViewMiddleware',

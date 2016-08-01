@@ -19,6 +19,11 @@ from django.utils.text import capfirst
 from django.utils.translation import ungettext
 
 
+class FieldIsAForeignKeyColumnName(Exception):
+    """A field is a foreign key attname, i.e. <FK>_id."""
+    pass
+
+
 def lookup_needs_distinct(opts, lookup_path):
     """
     Returns True if 'distinct()' should be used to query the given lookup path.
@@ -272,7 +277,7 @@ def lookup_field(name, obj, model_admin=None):
     opts = obj._meta
     try:
         f = _get_non_gfk_field(opts, name)
-    except FieldDoesNotExist:
+    except (FieldDoesNotExist, FieldIsAForeignKeyColumnName):
         # For non-field values, the value is either a method, property or
         # returned via a callable.
         if callable(name):
@@ -310,6 +315,11 @@ def _get_non_gfk_field(opts, name):
             # Generic foreign keys OR reverse relations
             ((field.many_to_one and not field.related_model) or field.one_to_many)):
         raise FieldDoesNotExist()
+
+    # Avoid coercing <FK>_id fields to FK
+    if field.is_relation and hasattr(field, 'attname') and field.attname == name:
+        raise FieldIsAForeignKeyColumnName()
+
     return field
 
 
@@ -362,6 +372,10 @@ def label_for_field(name, model, model_admin=None, return_attr=False):
                     label = pretty_name(attr.__name__)
             else:
                 label = pretty_name(name)
+    except FieldIsAForeignKeyColumnName:
+        label = pretty_name(name)
+        attr = name
+
     if return_attr:
         return (label, attr)
     else:
@@ -372,7 +386,7 @@ def help_text_for_field(name, model):
     help_text = ""
     try:
         field = _get_non_gfk_field(model._meta, name)
-    except FieldDoesNotExist:
+    except (FieldDoesNotExist, FieldIsAForeignKeyColumnName):
         pass
     else:
         if hasattr(field, 'help_text'):
@@ -383,7 +397,7 @@ def help_text_for_field(name, model):
 def display_for_field(value, field, empty_value_display):
     from django.contrib.admin.templatetags.admin_list import _boolean_icon
 
-    if field.flatchoices:
+    if getattr(field, 'flatchoices', None):
         return dict(field.flatchoices).get(value, empty_value_display)
     # NullBooleanField needs special-case null-handling, so it comes
     # before the general null test.
@@ -402,7 +416,7 @@ def display_for_field(value, field, empty_value_display):
     elif isinstance(field, models.FileField) and value:
         return format_html('<a href="{}">{}</a>', value.url, value)
     else:
-        return smart_text(value)
+        return display_for_value(value, empty_value_display)
 
 
 def display_for_value(value, empty_value_display, boolean=False):
@@ -418,6 +432,8 @@ def display_for_value(value, empty_value_display, boolean=False):
         return formats.localize(value)
     elif isinstance(value, six.integer_types + (decimal.Decimal, float)):
         return formats.number_format(value)
+    elif isinstance(value, (list, tuple)):
+        return ', '.join(force_text(v) for v in value)
     else:
         return smart_text(value)
 

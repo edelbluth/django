@@ -2,6 +2,7 @@
 from __future__ import unicode_literals
 
 import datetime
+import decimal
 import functools
 import math
 import os
@@ -33,6 +34,15 @@ try:
     import enum
 except ImportError:
     enum = None
+
+
+class Money(decimal.Decimal):
+    def deconstruct(self):
+        return (
+            '%s.%s' % (self.__class__.__module__, self.__class__.__name__),
+            [six.text_type(self)],
+            {}
+        )
 
 
 class TestModel1(object):
@@ -200,6 +210,18 @@ class WriterTests(SimpleTestCase):
         self.assertTrue(math.isinf(self.serialize_round_trip(float("-inf"))))
         self.assertTrue(math.isnan(self.serialize_round_trip(float("nan"))))
 
+        self.assertSerializedEqual(decimal.Decimal('1.3'))
+        self.assertSerializedResultEqual(
+            decimal.Decimal('1.3'),
+            ("Decimal('1.3')", {'from decimal import Decimal'})
+        )
+
+        self.assertSerializedEqual(Money('1.3'))
+        self.assertSerializedResultEqual(
+            Money('1.3'),
+            ("migrations.test_writer.Money('1.3')", {'import migrations.test_writer'})
+        )
+
     def test_serialize_constants(self):
         self.assertSerializedEqual(None)
         self.assertSerializedEqual(True)
@@ -296,7 +318,7 @@ class WriterTests(SimpleTestCase):
         )
 
     def test_serialize_functions(self):
-        with six.assertRaisesRegex(self, ValueError, 'Cannot serialize function: lambda'):
+        with self.assertRaisesMessage(ValueError, 'Cannot serialize function: lambda'):
             self.assertSerializedEqual(lambda x: 42)
         self.assertSerializedEqual(models.SET_NULL)
         string, imports = MigrationWriter.serialize(models.SET(42))
@@ -357,6 +379,8 @@ class WriterTests(SimpleTestCase):
             SettingsReference("someapp.model", "AUTH_USER_MODEL"),
             ("settings.AUTH_USER_MODEL", {"from django.conf import settings"})
         )
+
+    def test_serialize_iterators(self):
         self.assertSerializedResultEqual(
             ((x, x * x) for x in range(3)),
             ("((0, 0), (1, 1), (2, 4))", set())
@@ -461,8 +485,7 @@ class WriterTests(SimpleTestCase):
                 return "somewhere dynamic"
             thing = models.FileField(upload_to=upload_to)
 
-        with six.assertRaisesRegex(self, ValueError,
-                '^Could not find function upload_to in migrations.test_writer'):
+        with self.assertRaisesMessage(ValueError, 'Could not find function upload_to in migrations.test_writer'):
             self.serialize_round_trip(TestModel2.thing)
 
     def test_serialize_managers(self):
@@ -624,7 +647,7 @@ class WriterTests(SimpleTestCase):
                 migrations.AlterModelOptions(
                     name='model',
                     options={'verbose_name': 'model', 'verbose_name_plural': 'models'},
-                    ),
+                ),
             ]
         })
         writer = MigrationWriter(migration)

@@ -30,6 +30,7 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
         1184: 'DateTimeField',
         1266: 'TimeField',
         1700: 'DecimalField',
+        2950: 'UUIDField',
     }
 
     ignored_tables = []
@@ -78,9 +79,13 @@ class DatabaseIntrospection(BaseDatabaseIntrospection):
             WHERE table_name = %s""", [table_name])
         field_map = {line[0]: line[1:] for line in cursor.fetchall()}
         cursor.execute("SELECT * FROM %s LIMIT 1" % self.connection.ops.quote_name(table_name))
-        return [FieldInfo(*((force_text(line[0]),) + line[1:6]
-                            + (field_map[force_text(line[0])][0] == 'YES', field_map[force_text(line[0])][1])))
-                for line in cursor.description]
+        return [
+            FieldInfo(*(
+                (force_text(line[0]),) +
+                line[1:6] +
+                (field_map[force_text(line[0])][0] == 'YES', field_map[force_text(line[0])][1])
+            )) for line in cursor.description
+        ]
 
     def get_relations(self, cursor, table_name):
         """

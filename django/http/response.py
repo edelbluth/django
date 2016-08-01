@@ -240,7 +240,7 @@ class HttpResponseBase(six.Iterator):
         return force_bytes(value, self.charset)
 
     # These methods partially implement the file-like object interface.
-    # See http://docs.python.org/lib/bltin-file-objects.html
+    # See https://docs.python.org/3/library/io.html#io.IOBase
 
     # The WSGI server must call this method upon completion of the request.
     # See http://blog.dscpl.com.au/2012/10/obligations-for-calling-close-on.html
@@ -366,8 +366,10 @@ class StreamingHttpResponse(HttpResponseBase):
 
     @property
     def content(self):
-        raise AttributeError("This %s instance has no `content` attribute. "
-            "Use `streaming_content` instead." % self.__class__.__name__)
+        raise AttributeError(
+            "This %s instance has no `content` attribute. Use "
+            "`streaming_content` instead." % self.__class__.__name__
+        )
 
     @property
     def streaming_content(self):
@@ -508,8 +510,10 @@ class JsonResponse(HttpResponse):
     def __init__(self, data, encoder=DjangoJSONEncoder, safe=True,
                  json_dumps_params=None, **kwargs):
         if safe and not isinstance(data, dict):
-            raise TypeError('In order to allow non-dict objects to be '
-                'serialized set the safe parameter to False')
+            raise TypeError(
+                'In order to allow non-dict objects to be serialized set the '
+                'safe parameter to False.'
+            )
         if json_dumps_params is None:
             json_dumps_params = {}
         kwargs.setdefault('content_type', 'application/json')

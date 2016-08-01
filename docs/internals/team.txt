@@ -220,19 +220,6 @@ Tim Graham
 
     Tim works as a software engineer and lives in Philadelphia, PA, USA.
 
-`Idan Gazit`_
-    As a self-professed design geek, Idan was initially attracted to Django
-    sometime between magic-removal and queryset-refactor. Formally trained
-    as a software engineer, Idan straddles the worlds of design and code,
-    jack of two trades and master of none. He is passionate about usability
-    and finding novel ways to extract meaning from data, and is a longtime
-    photographer_.
-
-    Idan is currently hacking on all things data and visualization at Heroku_.
-
-    .. _Idan Gazit: http://gazit.me
-    .. _photographer: https://flickr.com/photos/idangazit
-
 Paul McMillan
     Paul found Django in 2008 while looking for a more
     structured approach to web programming. He stuck around after
@@ -400,7 +387,7 @@ Daniele Procida
 
     .. _Divio: https://divio.ch/
     .. _Arkestra: http://arkestra-project.org/
-    .. _Don\'t be afraid to commit: https://dont-be-afraid-to-commit.readthedocs.org
+    .. _Don\'t be afraid to commit: https://dont-be-afraid-to-commit.readthedocs.io
 
 `Erik Romijn`_
     Erik started using Django in the days of 1.2. His largest contribution to Django was
@@ -481,15 +468,18 @@ Daniele Procida
     .. _smaller django apps: https://github.com/funkybob/
 
 `Markus Holtermann`_
-    Markus is a Master of Science student in Computer Science at `Technical
-    University of Berlin`_. He started working with Django in 2010 when he
-    joined the `ubuntuusers.de`_ web team to work on *Inyoka*. Markus made his
-    first contribution to the Django project during DjangoCon Europe 2013 in
-    Warsaw. He was the web team leader for the `EuroPython 2014 website`_.
+    Markus is a senior backend developer at `LaterPay`_ in Munich. He studied
+    Computer Science at the `Technical University of Berlin`_. He started
+    working with Django in 2010 when he joined the `ubuntuusers.de`_ web team
+    to work on *Inyoka*. Markus made his first contribution to the Django
+    project during DjangoCon Europe 2013 in Warsaw. He was the web team leader
+    for the `EuroPython 2014 website`_ and started regular contributions to
+    Django after that.
 
     Markus lives in Berlin, Germany.
 
     .. _Markus Holtermann: https://github.com/MarkusH
+    .. _LaterPay: https://www.laterpay.net/
     .. _Technical University of Berlin: http://www.tu-berlin.de/
     .. _ubuntuusers.de: https://ubuntuusers.de/
     .. _EuroPython 2014 website: https://ep2014.europython.eu/
@@ -554,6 +544,32 @@ Daniele Procida
     .. _Django Girls Tutorial: http://tutorial.djangogirls.org
     .. _Django Girls: https://djangogirls.org
     .. _Potato: https://p.ota.to
+
+`Ola Sendecka`_
+    Ola started her adventure with Django when writing a university project in
+    2009. After that she attended her first DjangoCon Europe which
+    defined her future life as a Django professional.
+
+    Since then she has been an active community member. Ola co-organized a number of
+    Django sprints and conferences including:
+    `DjangoCon Europe 2013`_, `Django Under the Hood 2015`_ and
+    `DjangoCon Europe 2016`_. Together with Ola Sitarska she founded
+    `Django Girls`_, co-authored the `Django Girls Tutorial`_ and
+    is a member of the Django Girls Foundation. She is also an author of
+    the `Coding is for Girls`_ YouTube series teaching programming and Django
+    to beginners.
+
+    Originally from Poland, Ola currently lives in London, where she works for `Potato`_.
+
+    .. _Ola Sendecka: https://twitter.com/asendecka
+    .. _DjangoCon Europe 2013: http://love.djangocircus.com
+    .. _Django Under the Hood 2015: http://www.djangounderthehood.com/
+    .. _DjangoCon Europe 2016: http://2016.djangocon.eu
+    .. _Django Girls: https://djangogirls.org
+    .. _Django Girls Tutorial: http://tutorial.djangogirls.org
+    .. _Coding is for Girls: https://www.youtube.com/channel/UC0hNd2uW8jTR5K3KBzRuG2A
+    .. _Potato: https://p.ota.to
+
 
 Past team members
 =================
@@ -625,6 +641,19 @@ Malcolm Tredinnick
     Preston lives with his family and animal menagerie in Santa Barbara, CA, USA.
 
     .. _Preston Holmes: http://www.ptone.com/
+
+`Idan Gazit`_
+    As a self-professed design geek, Idan was initially attracted to Django
+    sometime between magic-removal and queryset-refactor. Formally trained
+    as a software engineer, Idan straddles the worlds of design and code,
+    jack of two trades and master of none. He is passionate about usability
+    and finding novel ways to extract meaning from data, and is a longtime
+    photographer_.
+
+    Idan is currently hacking on all things data and visualization at Heroku_.
+
+    .. _Idan Gazit: http://gazit.me
+    .. _photographer: https://flickr.com/photos/idangazit
 
 Matt Boersma
     Matt helped with Django's Oracle support.

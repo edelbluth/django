@@ -24,7 +24,7 @@ Field access API
 ================
 
 Retrieving a single field instance of a model by name
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-----------------------------------------------------
 
 .. method:: Options.get_field(field_name)
 
@@ -62,7 +62,7 @@ Retrieving a single field instance of a model by name
         FieldDoesNotExist: User has no field named 'does_not_exist'
 
 Retrieving all field instances of a model
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+-----------------------------------------
 
 .. method:: Options.get_fields(include_parents=True, include_hidden=False)
 
@@ -156,11 +156,11 @@ can be made to convert your code to the new API:
   then check if:
 
   - ``f.auto_created == False``, because the new ``get_field()``
-    API will find "reverse" relations), and:
+    API will find "reverse" relations, and:
 
   - ``f.is_relation and f.related_model is None``, because the new
     ``get_field()`` API will find
-    :class:`~django.contrib.contenttypes.fields.GenericForeignKey` relations;
+    :class:`~django.contrib.contenttypes.fields.GenericForeignKey` relations.
 
 * ``MyModel._meta.get_field_by_name(name)`` returns a tuple of these four
   values with the following replacements:
@@ -215,7 +215,8 @@ can be made to convert your code to the new API:
 
       [
           f for f in MyModel._meta.get_fields()
-          if (f.one_to_many or f.one_to_one) and f.auto_created
+          if (f.one_to_many or f.one_to_one)
+          and f.auto_created and not f.concrete
       ]
 
 * ``MyModel._meta.get_all_related_objects_with_model()`` becomes::
@@ -223,7 +224,8 @@ can be made to convert your code to the new API:
       [
           (f, f.model if f.model != MyModel else None)
           for f in MyModel._meta.get_fields()
-          if (f.one_to_many or f.one_to_one) and f.auto_created
+          if (f.one_to_many or f.one_to_one)
+          and f.auto_created and not f.concrete
       ]
 
 * ``MyModel._meta.get_all_related_many_to_many_objects()`` becomes::

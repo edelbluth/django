@@ -6,7 +6,7 @@ from django.db import connection
 from django.db.utils import DatabaseError
 from django.test import TransactionTestCase, mock, skipUnlessDBFeature
 
-from .models import Article, City, Reporter
+from .models import Article, ArticleReporter, City, Reporter
 
 
 class IntrospectionTests(TransactionTestCase):
@@ -16,10 +16,8 @@ class IntrospectionTests(TransactionTestCase):
     def test_table_names(self):
         tl = connection.introspection.table_names()
         self.assertEqual(tl, sorted(tl))
-        self.assertIn(Reporter._meta.db_table, tl,
-                     "'%s' isn't in table_list()." % Reporter._meta.db_table)
-        self.assertIn(Article._meta.db_table, tl,
-                     "'%s' isn't in table_list()." % Article._meta.db_table)
+        self.assertIn(Reporter._meta.db_table, tl, "'%s' isn't in table_list()." % Reporter._meta.db_table)
+        self.assertIn(Article._meta.db_table, tl, "'%s' isn't in table_list()." % Article._meta.db_table)
 
     def test_django_table_names(self):
         with connection.cursor() as cursor:
@@ -48,10 +46,12 @@ class IntrospectionTests(TransactionTestCase):
                 else:
                     raise
 
-        self.assertIn('introspection_article_view',
-                      connection.introspection.table_names(include_views=True))
-        self.assertNotIn('introspection_article_view',
-                         connection.introspection.table_names())
+        self.assertIn('introspection_article_view', connection.introspection.table_names(include_views=True))
+        self.assertNotIn('introspection_article_view', connection.introspection.table_names())
+
+    def test_unmanaged_through_model(self):
+        tables = connection.introspection.django_table_names()
+        self.assertNotIn(ArticleReporter._meta.db_table, tables)
 
     def test_installed_models(self):
         tables = [Article._meta.db_table, Reporter._meta.db_table]
@@ -61,8 +61,7 @@ class IntrospectionTests(TransactionTestCase):
     def test_sequence_list(self):
         sequences = connection.introspection.sequence_list()
         expected = {'table': Reporter._meta.db_table, 'column': 'id'}
-        self.assertIn(expected, sequences,
-                     'Reporter sequence not found in sequence_list()')
+        self.assertIn(expected, sequences, 'Reporter sequence not found in sequence_list()')
 
     def test_get_table_description_names(self):
         with connection.cursor() as cursor:

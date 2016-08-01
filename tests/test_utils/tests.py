@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+import sys
 import unittest
 import warnings
 
@@ -127,7 +128,8 @@ class AssertNumQueriesTests(TestCase):
         def test_func():
             raise ValueError
 
-        self.assertRaises(ValueError, self.assertNumQueries, 2, test_func)
+        with self.assertRaises(ValueError):
+            self.assertNumQueries(2, test_func)
 
     def test_assert_num_queries_with_client(self):
         person = Person.objects.create(name='test')
@@ -439,8 +441,10 @@ class HTMLEqualTests(SimpleTestCase):
         self.assertEqual(dom.children[0], "<p>foo</p> '</scr'+'ipt>' <span>bar</span>")
 
     def test_self_closing_tags(self):
-        self_closing_tags = ('br', 'hr', 'input', 'img', 'meta', 'spacer',
-            'link', 'frame', 'base', 'col')
+        self_closing_tags = (
+            'br', 'hr', 'input', 'img', 'meta', 'spacer', 'link', 'frame',
+            'base', 'col',
+        )
         for tag in self_closing_tags:
             dom = parse_html('<p>Hello <%s> world</p>' % tag)
             self.assertEqual(len(dom.children), 3)
@@ -626,6 +630,15 @@ class HTMLEqualTests(SimpleTestCase):
             self.assertHTMLEqual('<p>', '')
         with self.assertRaises(AssertionError):
             self.assertHTMLEqual('', '<p>')
+        error_msg = (
+            "First argument is not valid HTML:\n"
+            "('Unexpected end tag `div` (Line 1, Column 6)', (1, 6))"
+        ) if sys.version_info >= (3, 5) else (
+            "First argument is not valid HTML:\n"
+            "Unexpected end tag `div` (Line 1, Column 6), at line 1, column 7"
+        )
+        with self.assertRaisesMessage(AssertionError, error_msg):
+            self.assertHTMLEqual('< div></ div>', '<div></div>')
         with self.assertRaises(HTMLParseError):
             parse_html('</p>')
 
@@ -800,7 +813,8 @@ class AssertRaisesMsgTest(SimpleTestCase):
         """assertRaisesMessage shouldn't interpret RE special chars."""
         def func1():
             raise ValueError("[.*x+]y?")
-        self.assertRaisesMessage(ValueError, "[.*x+]y?", func1)
+        with self.assertRaisesMessage(ValueError, "[.*x+]y?"):
+            func1()
 
     @ignore_warnings(category=RemovedInDjango20Warning)
     def test_callable_obj_param(self):
@@ -865,22 +879,29 @@ class OverrideSettingsTests(SimpleTestCase):
         reverse('second')
 
     def test_urlconf_cache(self):
-        self.assertRaises(NoReverseMatch, lambda: reverse('first'))
-        self.assertRaises(NoReverseMatch, lambda: reverse('second'))
+        with self.assertRaises(NoReverseMatch):
+            reverse('first')
+        with self.assertRaises(NoReverseMatch):
+            reverse('second')
 
         with override_settings(ROOT_URLCONF=FirstUrls):
             self.client.get(reverse('first'))
-            self.assertRaises(NoReverseMatch, lambda: reverse('second'))
+            with self.assertRaises(NoReverseMatch):
+                reverse('second')
 
             with override_settings(ROOT_URLCONF=SecondUrls):
-                self.assertRaises(NoReverseMatch, lambda: reverse('first'))
+                with self.assertRaises(NoReverseMatch):
+                    reverse('first')
                 self.client.get(reverse('second'))
 
             self.client.get(reverse('first'))
-            self.assertRaises(NoReverseMatch, lambda: reverse('second'))
+            with self.assertRaises(NoReverseMatch):
+                reverse('second')
 
-        self.assertRaises(NoReverseMatch, lambda: reverse('first'))
-        self.assertRaises(NoReverseMatch, lambda: reverse('second'))
+        with self.assertRaises(NoReverseMatch):
+            reverse('first')
+        with self.assertRaises(NoReverseMatch):
+            reverse('second')
 
     def test_override_media_root(self):
         """

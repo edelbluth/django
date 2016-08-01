@@ -230,6 +230,7 @@ dumpdata
 Dunck
 dwithin
 editability
+elidable
 encodings
 Endian
 endswith
@@ -454,6 +455,7 @@ Magee
 makemessages
 makemigrations
 Mako
+manouche
 Mapnik
 Marczewski
 Marino
@@ -496,6 +498,7 @@ multiline
 multilinestring
 multipart
 multipolygon
+multitenancy
 multithreaded
 multithreading
 Mumbai
@@ -556,6 +559,7 @@ pessimization
 Petri
 Peucker
 pgAdmin
+PGRaster
 phishing
 php
 picklable
@@ -586,6 +590,7 @@ precomputation
 preconfigured
 prefetch
 prefetched
+prefetches
 prefetching
 prefork
 preforked
@@ -630,6 +635,7 @@ quoteless
 Radziej
 rc
 readded
+reallow
 reallowed
 rebase
 rebased
@@ -713,6 +719,7 @@ sharding
 showmigrations
 sid
 simultaneously
+Sitarska
 sitemap
 sitemaps
 sitewide
@@ -834,6 +841,7 @@ Tomek
 toolbar
 toolkits
 toolset
+Tox
 trac
 tracebacks
 transactional
@@ -966,6 +974,7 @@ wordcount
 wordwrap
 workflow
 worksforme
+wrappable
 wsgi
 www
 xe

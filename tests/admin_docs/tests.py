@@ -1,10 +1,9 @@
-import datetime
 import sys
 import unittest
 
 from django.conf import settings
 from django.contrib.admindocs import utils
-from django.contrib.admindocs.views import get_return_data_type
+from django.contrib.admindocs.views import get_return_data_type, simplify_regex
 from django.contrib.auth.models import User
 from django.contrib.sites.models import Site
 from django.test import TestCase, modify_settings, override_settings
@@ -18,18 +17,10 @@ class TestDataMixin(object):
 
     @classmethod
     def setUpTestData(cls):
-        # password = "secret"
-        User.objects.create(
-            pk=100, username='super', first_name='Super', last_name='User', email='super@example.com',
-            password='sha1$995a3$6011485ea3834267d719b4c801409b8b1ddd0158', is_active=True, is_superuser=True,
-            is_staff=True, last_login=datetime.datetime(2007, 5, 30, 13, 20, 10),
-            date_joined=datetime.datetime(2007, 5, 30, 13, 20, 10)
-        )
+        cls.superuser = User.objects.create_superuser(username='super', password='secret', email='super@example.com')
 
 
-@override_settings(
-    PASSWORD_HASHERS=['django.contrib.auth.hashers.SHA1PasswordHasher'],
-    ROOT_URLCONF='admin_docs.urls')
+@override_settings(ROOT_URLCONF='admin_docs.urls')
 @modify_settings(INSTALLED_APPS={'append': 'django.contrib.admindocs'})
 class AdminDocsTestCase(TestCase):
     pass
@@ -38,8 +29,8 @@ class AdminDocsTestCase(TestCase):
 class MiscTests(AdminDocsTestCase):
 
     def setUp(self):
-        User.objects.create_superuser('super', None, 'secret')
-        self.client.login(username='super', password='secret')
+        superuser = User.objects.create_superuser('super', None, 'secret')
+        self.client.force_login(superuser)
 
     @modify_settings(INSTALLED_APPS={'remove': 'django.contrib.sites'})
     @override_settings(SITE_ID=None)    # will restore SITE_ID after the test
@@ -57,20 +48,17 @@ class MiscTests(AdminDocsTestCase):
 class AdminDocViewTests(TestDataMixin, AdminDocsTestCase):
 
     def setUp(self):
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
 
     def test_index(self):
         self.client.logout()
         response = self.client.get(reverse('django-admindocs-docroot'), follow=True)
         # Should display the login screen
-        self.assertContains(response,
-            '<input type="hidden" name="next" value="/admindocs/" />', html=True)
-        self.client.login(username='super', password='secret')
+        self.assertContains(response, '<input type="hidden" name="next" value="/admindocs/" />', html=True)
+        self.client.force_login(self.superuser)
         response = self.client.get(reverse('django-admindocs-docroot'))
         self.assertContains(response, '<h1>Documentation</h1>', html=True)
-        self.assertContains(response,
-                            '<h1 id="site-name"><a href="/admin/">Django '
-                            'administration</a></h1>')
+        self.assertContains(response, '<h1 id="site-name"><a href="/admin/">Django administration</a></h1>')
 
     def test_bookmarklets(self):
         response = self.client.get(reverse('django-admindocs-bookmarklets'))
@@ -86,26 +74,32 @@ class AdminDocViewTests(TestDataMixin, AdminDocsTestCase):
 
     def test_view_index(self):
         response = self.client.get(reverse('django-admindocs-views-index'))
-        self.assertContains(response,
+        self.assertContains(
+            response,
             '<h3><a href="/admindocs/views/django.contrib.admindocs.views.BaseAdminDocsView/">/admindocs/</a></h3>',
-            html=True)
+            html=True
+        )
         self.assertContains(response, 'Views by namespace test')
         self.assertContains(response, 'Name: <code>test:func</code>.')
 
     def test_view_detail(self):
-        response = self.client.get(
-            reverse('django-admindocs-views-detail',
-                    args=['django.contrib.admindocs.views.BaseAdminDocsView']))
+        url = reverse('django-admindocs-views-detail', args=['django.contrib.admindocs.views.BaseAdminDocsView'])
+        response = self.client.get(url)
         # View docstring
         self.assertContains(response, 'Base view for admindocs views.')
+
+    @override_settings(ROOT_URLCONF='admin_docs.namespace_urls')
+    def test_namespaced_view_detail(self):
+        url = reverse('django-admindocs-views-detail', args=['admin_docs.views.XViewClass'])
+        response = self.client.get(url)
+        self.assertContains(response, '<h1>admin_docs.views.XViewClass</h1>')
 
     def test_view_detail_illegal_import(self):
         """
         #23601 - Ensure the view exists in the URLconf.
         """
-        response = self.client.get(
-            reverse('django-admindocs-views-detail',
-                    args=['urlpatterns_reverse.nonimported_module.view']))
+        url = reverse('django-admindocs-views-detail', args=['urlpatterns_reverse.nonimported_module.view'])
+        response = self.client.get(url)
         self.assertEqual(response.status_code, 404)
         self.assertNotIn("urlpatterns_reverse.nonimported_module", sys.modules)
 
@@ -118,24 +112,31 @@ class AdminDocViewTests(TestDataMixin, AdminDocsTestCase):
         )
 
     def test_template_detail(self):
-        response = self.client.get(reverse('django-admindocs-templates',
-            args=['admin_doc/template_detail.html']))
-        self.assertContains(response,
-            '<h1>Template: "admin_doc/template_detail.html"</h1>', html=True)
+        response = self.client.get(reverse('django-admindocs-templates', args=['admin_doc/template_detail.html']))
+        self.assertContains(response, '<h1>Template: "admin_doc/template_detail.html"</h1>', html=True)
 
     def test_missing_docutils(self):
         utils.docutils_is_available = False
         try:
             response = self.client.get(reverse('django-admindocs-docroot'))
-            self.assertContains(response,
+            self.assertContains(
+                response,
                 '<h3>The admin documentation system requires Python\'s '
                 '<a href="http://docutils.sf.net/">docutils</a> library.</h3>',
-                html=True)
-            self.assertContains(response,
-                                '<h1 id="site-name"><a href="/admin/">Django '
-                                'administration</a></h1>')
+                html=True
+            )
+            self.assertContains(response, '<h1 id="site-name"><a href="/admin/">Django administration</a></h1>')
         finally:
             utils.docutils_is_available = True
+
+    def test_simplify_regex(self):
+        tests = (
+            ('^a', '/a'),
+            ('^(?P<a>\w+)/b/(?P<c>\w+)/$', '/<a>/b/<c>/'),
+            ('^(?P<a>\w+)/b/(?P<c>\w+)$', '/<a>/b/<c>'),
+        )
+        for pattern, output in tests:
+            self.assertEqual(simplify_regex(pattern), output)
 
 
 @override_settings(TEMPLATES=[{
@@ -168,7 +169,7 @@ class XViewMiddlewareTest(TestDataMixin, AdminDocsTestCase):
         user = User.objects.get(username='super')
         response = self.client.head('/xview/func/')
         self.assertNotIn('X-View', response)
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
         response = self.client.head('/xview/func/')
         self.assertIn('X-View', response)
         self.assertEqual(response['X-View'], 'admin_docs.views.xview')
@@ -186,7 +187,7 @@ class XViewMiddlewareTest(TestDataMixin, AdminDocsTestCase):
         user = User.objects.get(username='super')
         response = self.client.head('/xview/class/')
         self.assertNotIn('X-View', response)
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
         response = self.client.head('/xview/class/')
         self.assertIn('X-View', response)
         self.assertEqual(response['X-View'], 'admin_docs.views.XViewClass')
@@ -209,18 +210,12 @@ class DefaultRoleTest(AdminDocsTestCase):
         ``django.contrib.admindocs.utils.parse_rst`` should use
         ``cmsreference`` as the default role.
         """
-        markup = ('<p><a class="reference external" href="/admindocs/%s">'
-                  'title</a></p>\n')
-        self.assertEqual(utils.parse_rst('`title`', 'model'),
-                         markup % 'models/title/')
-        self.assertEqual(utils.parse_rst('`title`', 'view'),
-                         markup % 'views/title/')
-        self.assertEqual(utils.parse_rst('`title`', 'template'),
-                         markup % 'templates/title/')
-        self.assertEqual(utils.parse_rst('`title`', 'filter'),
-                         markup % 'filters/#title')
-        self.assertEqual(utils.parse_rst('`title`', 'tag'),
-                         markup % 'tags/#title')
+        markup = '<p><a class="reference external" href="/admindocs/%s">title</a></p>\n'
+        self.assertEqual(utils.parse_rst('`title`', 'model'), markup % 'models/title/')
+        self.assertEqual(utils.parse_rst('`title`', 'view'), markup % 'views/title/')
+        self.assertEqual(utils.parse_rst('`title`', 'template'), markup % 'templates/title/')
+        self.assertEqual(utils.parse_rst('`title`', 'filter'), markup % 'filters/#title')
+        self.assertEqual(utils.parse_rst('`title`', 'tag'), markup % 'tags/#title')
 
     def test_publish_parts(self):
         """
@@ -229,8 +224,7 @@ class DefaultRoleTest(AdminDocsTestCase):
         ``cmsreference``. See #6681.
         """
         import docutils
-        self.assertNotEqual(docutils.parsers.rst.roles.DEFAULT_INTERPRETED_ROLE,
-                            'cmsreference')
+        self.assertNotEqual(docutils.parsers.rst.roles.DEFAULT_INTERPRETED_ROLE, 'cmsreference')
         source = 'reST, `interpreted text`, default role.'
         markup = '<p>reST, <cite>interpreted text</cite>, default role.</p>\n'
         parts = docutils.core.publish_parts(source=source, writer_name="html4css1")
@@ -244,7 +238,7 @@ class TestModelDetailView(TestDataMixin, AdminDocsTestCase):
     """
 
     def setUp(self):
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
         with captured_stderr() as self.docutils_stderr:
             self.response = self.client.get(reverse('django-admindocs-models-detail', args=['admin_docs', 'Person']))
 
@@ -295,21 +289,9 @@ class TestModelDetailView(TestDataMixin, AdminDocsTestCase):
         by a method
         """
         company = Company.objects.create(name="Django")
-        person = Person.objects.create(
-            first_name="Human",
-            last_name="User",
-            company=company
-        )
-
-        self.assertEqual(
-            get_return_data_type(person.get_status_count.__name__),
-            'Integer'
-        )
-
-        self.assertEqual(
-            get_return_data_type(person.get_groups_list.__name__),
-            'List'
-        )
+        person = Person.objects.create(first_name="Human", last_name="User", company=company)
+        self.assertEqual(get_return_data_type(person.get_status_count.__name__), 'Integer')
+        self.assertEqual(get_return_data_type(person.get_groups_list.__name__), 'List')
 
     def test_descriptions_render_correctly(self):
         """
@@ -370,10 +352,7 @@ class TestModelDetailView(TestDataMixin, AdminDocsTestCase):
         A model with ``related_name`` of `+` should not show backward relationship
         links in admin docs
         """
-        response = self.client.get(
-            reverse('django-admindocs-models-detail',
-                    args=['admin_docs', 'family']))
-
+        response = self.client.get(reverse('django-admindocs-models-detail', args=['admin_docs', 'family']))
         fields = response.context_data.get('fields')
         self.assertEqual(len(fields), 2)
 

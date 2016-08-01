@@ -21,10 +21,12 @@ from django.contrib.gis.geos.prototypes.io import (
     ewkb_w, wkb_r, wkb_w, wkt_r, wkt_w,
 )
 from django.utils import six
+from django.utils.deconstruct import deconstructible
 from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_bytes, force_text
 
 
+@deconstructible
 class GEOSGeometry(GEOSBase, ListMixin):
     "A class that, generally, encapsulates a GEOS geometry."
 
@@ -62,8 +64,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
                 g = wkb_r().read(force_bytes(geo_input))
             elif json_regex.match(geo_input):
                 # Handling GeoJSON input.
-                if not gdal.HAS_GDAL:
-                    raise ValueError('Initializing geometry from JSON input requires GDAL.')
                 g = wkb_r().read(gdal.OGRGeometry(geo_input).wkb)
             else:
                 raise ValueError('String or unicode input unrecognized as WKT EWKT, and HEXEWKB.')
@@ -165,6 +165,10 @@ class GEOSGeometry(GEOSBase, ListMixin):
             raise GEOSException('Invalid Geometry loaded from pickled state.')
         self.ptr = ptr
         self._post_init(srid)
+
+    @classmethod
+    def from_gml(cls, gml_string):
+        return gdal.OGRGeometry.from_gml(gml_string).geos
 
     # Comparison operators
     def __eq__(self, other):
@@ -408,7 +412,7 @@ class GEOSGeometry(GEOSBase, ListMixin):
     @property
     def wkt(self):
         "Returns the WKT (Well-Known Text) representation of this Geometry."
-        return wkt_w(3 if self.hasz else 2).write(self).decode()
+        return wkt_w(dim=3 if self.hasz else 2, trim=True).write(self).decode()
 
     @property
     def hex(self):
@@ -419,7 +423,7 @@ class GEOSGeometry(GEOSBase, ListMixin):
         """
         # A possible faster, all-python, implementation:
         #  str(self.wkb).encode('hex')
-        return wkb_w(3 if self.hasz else 2).write_hex(self)
+        return wkb_w(dim=3 if self.hasz else 2).write_hex(self)
 
     @property
     def hexewkb(self):
@@ -428,7 +432,7 @@ class GEOSGeometry(GEOSBase, ListMixin):
         extension of the WKB specification that includes SRID value that are
         a part of this geometry.
         """
-        return ewkb_w(3 if self.hasz else 2).write_hex(self)
+        return ewkb_w(dim=3 if self.hasz else 2).write_hex(self)
 
     @property
     def json(self):
@@ -474,8 +478,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
     @property
     def ogr(self):
         "Returns the OGR Geometry for this Geometry."
-        if not gdal.HAS_GDAL:
-            raise GEOSException('GDAL required to convert to an OGRGeometry.')
         if self.srid:
             try:
                 return gdal.OGRGeometry(self.wkb, self.srid)
@@ -486,8 +488,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
     @property
     def srs(self):
         "Returns the OSR SpatialReference for SRID of this Geometry."
-        if not gdal.HAS_GDAL:
-            raise GEOSException('GDAL required to return a SpatialReference object.')
         if self.srid:
             try:
                 return gdal.SpatialReference(self.srid)
@@ -517,9 +517,6 @@ class GEOSGeometry(GEOSBase, ListMixin):
                 return self.clone()
             else:
                 return
-
-        if not gdal.HAS_GDAL:
-            raise GEOSException("GDAL library is not available to transform() geometry.")
 
         if isinstance(ct, gdal.CoordTransform):
             # We don't care about SRID because CoordTransform presupposes

@@ -9,6 +9,7 @@ import smtpd
 import sys
 import tempfile
 import threading
+from email.header import Header
 from email.mime.text import MIMEText
 from smtplib import SMTP, SMTPException
 from ssl import SSLError
@@ -19,8 +20,9 @@ from django.core.mail import (
     send_mail, send_mass_mail,
 )
 from django.core.mail.backends import console, dummy, filebased, locmem, smtp
-from django.core.mail.message import BadHeaderError
+from django.core.mail.message import BadHeaderError, sanitize_address
 from django.test import SimpleTestCase, override_settings
+from django.test.utils import requires_tz_support
 from django.utils._os import upath
 from django.utils.encoding import force_bytes, force_text
 from django.utils.six import PY3, StringIO, binary_type
@@ -31,8 +33,10 @@ if PY3:
     from email import message_from_bytes, message_from_binary_file
 else:
     from email.Utils import parseaddr
-    from email import (message_from_string as message_from_bytes,
-        message_from_file as message_from_binary_file)
+    from email import (
+        message_from_string as message_from_bytes,
+        message_from_file as message_from_binary_file,
+    )
 
 
 class HeadersCheckMixin(object):
@@ -143,11 +147,13 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
 
     def test_header_injection(self):
         email = EmailMessage('Subject\nInjection Test', 'Content', 'from@example.com', ['to@example.com'])
-        self.assertRaises(BadHeaderError, email.message)
+        with self.assertRaises(BadHeaderError):
+            email.message()
         email = EmailMessage(
             ugettext_lazy('Subject\nInjection Test'), 'Content', 'from@example.com', ['to@example.com']
         )
-        self.assertRaises(BadHeaderError, email.message)
+        with self.assertRaises(BadHeaderError):
+            email.message()
 
     def test_space_continuation(self):
         """
@@ -384,6 +390,14 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
                 msgs_sent_num = email.send()
                 self.assertEqual(msgs_sent_num, 1)
 
+    def test_attach_text_as_bytes(self):
+        msg = EmailMessage('subject', 'body', 'from@example.com', ['to@example.com'])
+        file_path = os.path.join(os.path.dirname(upath(__file__)), 'attachments', 'file.txt')
+        with open(file_path, mode='rb') as fh:
+            msg.attach('file.txt', fh.read())
+        sent_num = msg.send()
+        self.assertEqual(sent_num, 1)
+
     def test_dummy_backend(self):
         """
         Make sure that dummy backends returns correct number of sent messages
@@ -563,6 +577,62 @@ class MailTests(HeadersCheckMixin, SimpleTestCase):
         # Verify that the child message header is not base64 encoded
         self.assertIn(str('Child Subject'), parent_s)
 
+    def test_sanitize_address(self):
+        """
+        Email addresses are properly sanitized.
+        """
+        # Simple ASCII address - string form
+        self.assertEqual(sanitize_address('to@example.com', 'ascii'), 'to@example.com')
+        self.assertEqual(sanitize_address('to@example.com', 'utf-8'), 'to@example.com')
+        # Bytestrings are transformed to normal strings.
+        self.assertEqual(sanitize_address(b'to@example.com', 'utf-8'), 'to@example.com')
+
+        # Simple ASCII address - tuple form
+        self.assertEqual(
+            sanitize_address(('A name', 'to@example.com'), 'ascii'),
+            'A name <to@example.com>'
+        )
+        if PY3:
+            self.assertEqual(
+                sanitize_address(('A name', 'to@example.com'), 'utf-8'),
+                '=?utf-8?q?A_name?= <to@example.com>'
+            )
+        else:
+            self.assertEqual(
+                sanitize_address(('A name', 'to@example.com'), 'utf-8'),
+                'A name <to@example.com>'
+            )
+
+        # Unicode characters are are supported in RFC-6532.
+        self.assertEqual(
+            sanitize_address('tó@example.com', 'utf-8'),
+            '=?utf-8?b?dMOz?=@example.com'
+        )
+        self.assertEqual(
+            sanitize_address(('Tó Example', 'tó@example.com'), 'utf-8'),
+            '=?utf-8?q?T=C3=B3_Example?= <=?utf-8?b?dMOz?=@example.com>'
+        )
+
+
+@requires_tz_support
+class MailTimeZoneTests(SimpleTestCase):
+
+    @override_settings(EMAIL_USE_LOCALTIME=False, USE_TZ=True, TIME_ZONE='Africa/Algiers')
+    def test_date_header_utc(self):
+        """
+        EMAIL_USE_LOCALTIME=False creates a datetime in UTC.
+        """
+        email = EmailMessage('Subject', 'Body', 'bounce@example.com', ['to@example.com'])
+        self.assertTrue(email.message()['Date'].endswith('-0000'))
+
+    @override_settings(EMAIL_USE_LOCALTIME=True, USE_TZ=True, TIME_ZONE='Africa/Algiers')
+    def test_date_header_localtime(self):
+        """
+        EMAIL_USE_LOCALTIME=True creates a datetime in the local time zone.
+        """
+        email = EmailMessage('Subject', 'Body', 'bounce@example.com', ['to@example.com'])
+        self.assertTrue(email.message()['Date'].endswith('+0100'))  # Africa/Algiers is UTC+1
+
 
 class PythonGlobalState(SimpleTestCase):
     """
@@ -611,9 +681,10 @@ class BaseEmailBackendTests(HeadersCheckMixin, object):
 
     def get_the_message(self):
         mailbox = self.get_mailbox_content()
-        self.assertEqual(len(mailbox), 1,
-            "Expected exactly one message, got %d.\n%r" % (len(mailbox), [
-                m.as_string() for m in mailbox]))
+        self.assertEqual(
+            len(mailbox), 1,
+            "Expected exactly one message, got %d.\n%r" % (len(mailbox), [m.as_string() for m in mailbox])
+        )
         return mailbox[0]
 
     def test_send(self):
@@ -633,6 +704,22 @@ class BaseEmailBackendTests(HeadersCheckMixin, object):
         message = self.get_the_message()
         self.assertEqual(message["subject"], '=?utf-8?q?Ch=C3=A8re_maman?=')
         self.assertEqual(force_text(message.get_payload(decode=True)), 'Je t\'aime très fort')
+
+    def test_send_long_lines(self):
+        """
+        Email line length is limited to 998 chars by the RFC:
+        https://tools.ietf.org/html/rfc5322#section-2.1.1
+        Message body containing longer lines are converted to Quoted-Printable
+        to avoid having to insert newlines, which could be hairy to do properly.
+        """
+        email = EmailMessage('Subject', "Comment ça va? " * 100, 'from@example.com', ['to@example.com'])
+        email.send()
+        message = self.get_the_message()
+        self.assertMessageHasHeaders(message, {
+            ('MIME-Version', '1.0'),
+            ('Content-Type', 'text/plain; charset="utf-8"'),
+            ('Content-Transfer-Encoding', 'quoted-printable'),
+        })
 
     def test_send_many(self):
         email1 = EmailMessage('Subject', 'Content1', 'from@example.com', ['to@example.com'])
@@ -767,8 +854,7 @@ class BaseEmailBackendTests(HeadersCheckMixin, object):
         self.assertEqual(message.get('to'), 'to@xn--4ca9at.com')
 
         self.flush_mailbox()
-        m = EmailMessage('Subject', 'Content', 'from@öäü.com',
-                     ['to@öäü.com'], cc=['cc@öäü.com'])
+        m = EmailMessage('Subject', 'Content', 'from@öäü.com', ['to@öäü.com'], cc=['cc@öäü.com'])
         m.send()
         message = self.get_the_message()
         self.assertEqual(message.get('subject'), 'Subject')
@@ -1006,6 +1092,15 @@ class FakeSMTPServer(smtpd.SMTPServer, threading.Thread):
             data = data.encode('utf-8')
         m = message_from_bytes(data)
         maddr = parseaddr(m.get('from'))[1]
+
+        if mailfrom != maddr:
+            # According to the spec, mailfrom does not necessarily match the
+            # From header - on Python 3 this is the case where the local part
+            # isn't encoded, so try to correct that.
+            lp, domain = mailfrom.split('@', 1)
+            lp = Header(lp, 'utf-8').encode()
+            mailfrom = '@'.join([lp, domain])
+
         if mailfrom != maddr:
             return "553 '%s' != '%s'" % (mailfrom, maddr)
         with self.sink_lock:
@@ -1107,8 +1202,8 @@ class SMTPBackendTests(BaseEmailBackendTests, SMTPBackendTestsBase):
         backend = smtp.EmailBackend(
             username='not empty username', password='not empty password')
         try:
-            self.assertRaisesMessage(SMTPException,
-                'SMTP AUTH extension not supported by server.', backend.open)
+            with self.assertRaisesMessage(SMTPException, 'SMTP AUTH extension not supported by server.'):
+                backend.open()
         finally:
             backend.close()
 
@@ -1162,7 +1257,7 @@ class SMTPBackendTests(BaseEmailBackendTests, SMTPBackendTestsBase):
 
     def test_email_ssl_certfile_default_disabled(self):
         backend = smtp.EmailBackend()
-        self.assertEqual(backend.ssl_certfile, None)
+        self.assertIsNone(backend.ssl_certfile)
 
     @override_settings(EMAIL_SSL_KEYFILE='foo')
     def test_email_ssl_keyfile_use_settings(self):
@@ -1176,15 +1271,15 @@ class SMTPBackendTests(BaseEmailBackendTests, SMTPBackendTestsBase):
 
     def test_email_ssl_keyfile_default_disabled(self):
         backend = smtp.EmailBackend()
-        self.assertEqual(backend.ssl_keyfile, None)
+        self.assertIsNone(backend.ssl_keyfile)
 
     @override_settings(EMAIL_USE_TLS=True)
     def test_email_tls_attempts_starttls(self):
         backend = smtp.EmailBackend()
         self.assertTrue(backend.use_tls)
         try:
-            self.assertRaisesMessage(SMTPException,
-                'STARTTLS extension not supported by server.', backend.open)
+            with self.assertRaisesMessage(SMTPException, 'STARTTLS extension not supported by server.'):
+                backend.open()
         finally:
             backend.close()
 
@@ -1193,14 +1288,15 @@ class SMTPBackendTests(BaseEmailBackendTests, SMTPBackendTestsBase):
         backend = smtp.EmailBackend()
         self.assertTrue(backend.use_ssl)
         try:
-            self.assertRaises(SSLError, backend.open)
+            with self.assertRaises(SSLError):
+                backend.open()
         finally:
             backend.close()
 
     def test_connection_timeout_default(self):
         """Test that the connection's timeout value is None by default."""
         connection = mail.get_connection('django.core.mail.backends.smtp.EmailBackend')
-        self.assertEqual(connection.timeout, None)
+        self.assertIsNone(connection.timeout)
 
     def test_connection_timeout_custom(self):
         """Test that the timeout parameter can be customized."""

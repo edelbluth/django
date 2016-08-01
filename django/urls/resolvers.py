@@ -9,8 +9,10 @@ from __future__ import unicode_literals
 
 import functools
 import re
+import threading
 from importlib import import_module
 
+from django.conf import settings
 from django.core.exceptions import ImproperlyConfigured
 from django.utils import lru_cache, six
 from django.utils.datastructures import MultiValueDict
@@ -163,6 +165,7 @@ class RegexURLResolver(LocaleRegexProvider):
         # urlpatterns
         self._callback_strs = set()
         self._populated = False
+        self._local = threading.local()
 
     def __repr__(self):
         if isinstance(self.urlconf_name, list) and len(self.urlconf_name):
@@ -176,6 +179,13 @@ class RegexURLResolver(LocaleRegexProvider):
         )
 
     def _populate(self):
+        # Short-circuit if called recursively in this thread to prevent
+        # infinite recursion. Concurrent threads may call this at the same
+        # time and will need to continue, so set 'populating' on a
+        # thread-local variable.
+        if getattr(self._local, 'populating', False):
+            return
+        self._local.populating = True
         lookups = MultiValueDict()
         namespaces = {}
         apps = {}
@@ -208,7 +218,9 @@ class RegexURLResolver(LocaleRegexProvider):
                         namespaces[namespace] = (p_pattern + prefix, sub_pattern)
                     for app_name, namespace_list in pattern.app_dict.items():
                         apps.setdefault(app_name, []).extend(namespace_list)
-                    self._callback_strs.update(pattern._callback_strs)
+                if not getattr(pattern._local, 'populating', False):
+                    pattern._populate()
+                self._callback_strs.update(pattern._callback_strs)
             else:
                 bits = normalize(p_pattern)
                 lookups.appendlist(pattern.callback, (bits, p_pattern, pattern.default_args))
@@ -218,6 +230,7 @@ class RegexURLResolver(LocaleRegexProvider):
         self._namespace_dict[language_code] = namespaces
         self._app_dict[language_code] = apps
         self._populated = True
+        self._local.populating = False
 
     @property
     def reverse_dict(self):
@@ -315,6 +328,9 @@ class RegexURLResolver(LocaleRegexProvider):
             callback = getattr(urls, 'handler%s' % view_type)
         return get_callable(callback), {}
 
+    def reverse(self, lookup_view, *args, **kwargs):
+        return self._reverse_with_prefix(lookup_view, '', *args, **kwargs)
+
     def _reverse_with_prefix(self, lookup_view, _prefix, *args, **kwargs):
         if args and kwargs:
             raise ValueError("Don't mix *args and **kwargs in call to reverse()!")
@@ -381,15 +397,22 @@ class LocaleRegexURLResolver(RegexURLResolver):
     Rather than taking a regex argument, we just override the ``regex``
     function to always return the active language-code as regex.
     """
-    def __init__(self, urlconf_name, default_kwargs=None, app_name=None, namespace=None):
+    def __init__(
+        self, urlconf_name, default_kwargs=None, app_name=None, namespace=None,
+        prefix_default_language=True,
+    ):
         super(LocaleRegexURLResolver, self).__init__(
             None, urlconf_name, default_kwargs, app_name, namespace,
         )
+        self.prefix_default_language = prefix_default_language
 
     @property
     def regex(self):
-        language_code = get_language()
+        language_code = get_language() or settings.LANGUAGE_CODE
         if language_code not in self._regex_dict:
-            regex_compiled = re.compile('^%s/' % language_code, re.UNICODE)
-            self._regex_dict[language_code] = regex_compiled
+            if language_code == settings.LANGUAGE_CODE and not self.prefix_default_language:
+                regex_string = ''
+            else:
+                regex_string = '^%s/' % language_code
+            self._regex_dict[language_code] = re.compile(regex_string, re.UNICODE)
         return self._regex_dict[language_code]

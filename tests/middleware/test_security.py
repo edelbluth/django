@@ -86,10 +86,7 @@ class SecurityMiddlewareTest(SimpleTestCase):
         "includeSubDomains" tag to the response.
         """
         response = self.process_response(secure=True)
-        self.assertEqual(
-            response["strict-transport-security"],
-            "max-age=600; includeSubDomains",
-            )
+        self.assertEqual(response["strict-transport-security"], "max-age=600; includeSubDomains")
 
     @override_settings(
         SECURE_HSTS_SECONDS=600, SECURE_HSTS_INCLUDE_SUBDOMAINS=False)
@@ -110,7 +107,7 @@ class SecurityMiddlewareTest(SimpleTestCase):
         """
         self.assertEqual(self.process_response()["x-content-type-options"], "nosniff")
 
-    @override_settings(SECURE_CONTENT_TYPE_NO_SNIFF=True)
+    @override_settings(SECURE_CONTENT_TYPE_NOSNIFF=True)
     def test_content_type_already_present(self):
         """
         The middleware will not override an "x-content-type-options" header
@@ -171,7 +168,7 @@ class SecurityMiddlewareTest(SimpleTestCase):
         The middleware does not redirect secure requests.
         """
         ret = self.process_request("get", "/some/url", secure=True)
-        self.assertEqual(ret, None)
+        self.assertIsNone(ret)
 
     @override_settings(
         SECURE_SSL_REDIRECT=True, SECURE_REDIRECT_EXEMPT=["^insecure/"])
@@ -181,7 +178,7 @@ class SecurityMiddlewareTest(SimpleTestCase):
         exempt pattern.
         """
         ret = self.process_request("get", "/insecure/page")
-        self.assertEqual(ret, None)
+        self.assertIsNone(ret)
 
     @override_settings(
         SECURE_SSL_REDIRECT=True, SECURE_SSL_HOST="secure.example.com")
@@ -199,4 +196,4 @@ class SecurityMiddlewareTest(SimpleTestCase):
         With SSL_REDIRECT False, the middleware does no redirect.
         """
         ret = self.process_request("get", "/some/url")
-        self.assertEqual(ret, None)
+        self.assertIsNone(ret)

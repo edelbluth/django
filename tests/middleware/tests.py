@@ -38,7 +38,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         URLs with slashes should go unmolested.
         """
         request = self.rf.get('/slash/')
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponseNotFound()
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -48,7 +48,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         Matches to explicit slashless URLs should go unmolested.
         """
         request = self.rf.get('/noslash')
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponse("Here's the text of the Web page.")
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -67,10 +67,8 @@ class CommonMiddlewareTest(SimpleTestCase):
         APPEND_SLASH should redirect slashless URLs to a valid pattern.
         """
         request = self.rf.get('/slash')
-        response = HttpResponseNotFound()
-        r = CommonMiddleware().process_response(request, response)
+        r = CommonMiddleware().process_request(request)
         self.assertEqual(r.status_code, 301)
-        self.assertEqual(r.url, '/slash/')
 
     @override_settings(APPEND_SLASH=True)
     def test_append_slash_redirect_querystring(self):
@@ -155,7 +153,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         """
         request = self.rf.get('/customurlconf/slash/')
         request.urlconf = 'middleware.extra_urls'
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponseNotFound()
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -166,7 +164,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         """
         request = self.rf.get('/customurlconf/noslash')
         request.urlconf = 'middleware.extra_urls'
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponse("Here's the text of the Web page.")
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -177,7 +175,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         """
         request = self.rf.get('/customurlconf/unknown')
         request.urlconf = 'middleware.extra_urls'
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponseNotFound()
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -215,7 +213,7 @@ class CommonMiddlewareTest(SimpleTestCase):
         """
         request = self.rf.get('/customurlconf/slash')
         request.urlconf = 'middleware.extra_urls'
-        self.assertEqual(CommonMiddleware().process_request(request), None)
+        self.assertIsNone(CommonMiddleware().process_request(request))
         response = HttpResponseNotFound()
         self.assertEqual(CommonMiddleware().process_response(request, response), response)
 
@@ -278,6 +276,20 @@ class CommonMiddlewareTest(SimpleTestCase):
         self.assertFalse(CommonMiddleware().process_response(req, res).has_header('ETag'))
 
     @override_settings(USE_ETAGS=True)
+    def test_no_etag_no_store_cache(self):
+        req = HttpRequest()
+        res = HttpResponse('content')
+        res['Cache-Control'] = 'No-Cache, No-Store, Max-age=0'
+        self.assertFalse(CommonMiddleware().process_response(req, res).has_header('ETag'))
+
+    @override_settings(USE_ETAGS=True)
+    def test_etag_extended_cache_control(self):
+        req = HttpRequest()
+        res = HttpResponse('content')
+        res['Cache-Control'] = 'my-directive="my-no-store"'
+        self.assertTrue(CommonMiddleware().process_response(req, res).has_header('ETag'))
+
+    @override_settings(USE_ETAGS=True)
     def test_if_none_match(self):
         first_req = HttpRequest()
         first_res = CommonMiddleware().process_response(first_req, HttpResponse('content'))
@@ -286,6 +298,27 @@ class CommonMiddlewareTest(SimpleTestCase):
         second_req.META['HTTP_IF_NONE_MATCH'] = first_res['ETag']
         second_res = CommonMiddleware().process_response(second_req, HttpResponse('content'))
         self.assertEqual(second_res.status_code, 304)
+
+    # Tests for the Content-Length header
+
+    def test_content_length_header_added(self):
+        response = HttpResponse('content')
+        self.assertNotIn('Content-Length', response)
+        response = CommonMiddleware().process_response(HttpRequest(), response)
+        self.assertEqual(int(response['Content-Length']), len(response.content))
+
+    def test_content_length_header_not_added_for_streaming_response(self):
+        response = StreamingHttpResponse('content')
+        self.assertNotIn('Content-Length', response)
+        response = CommonMiddleware().process_response(HttpRequest(), response)
+        self.assertNotIn('Content-Length', response)
+
+    def test_content_length_header_not_changed(self):
+        response = HttpResponse()
+        bad_content_length = len(response.content) + 10
+        response['Content-Length'] = bad_content_length
+        response = CommonMiddleware().process_response(HttpRequest(), response)
+        self.assertEqual(int(response['Content-Length']), bad_content_length)
 
     # Other tests
 
@@ -301,9 +334,6 @@ class CommonMiddlewareTest(SimpleTestCase):
         request = self.rf.get('/slash')
         request.META['QUERY_STRING'] = force_str('drink=café')
         r = CommonMiddleware().process_request(request)
-        self.assertIsNone(r)
-        response = HttpResponseNotFound()
-        r = CommonMiddleware().process_response(request, response)
         self.assertEqual(r.status_code, 301)
 
     def test_response_redirect_class(self):
@@ -417,6 +447,20 @@ class BrokenLinkEmailsMiddlewareTest(SimpleTestCase):
         BrokenLinkEmailsMiddleware().process_response(self.req, self.resp)
         self.assertEqual(len(mail.outbox), 1)
 
+    @override_settings(APPEND_SLASH=True)
+    def test_referer_equal_to_requested_url_without_trailing_slash_when_append_slash_is_set(self):
+        self.req.path = self.req.path_info = '/regular_url/that/does/not/exist/'
+        self.req.META['HTTP_REFERER'] = self.req.path_info[:-1]
+        BrokenLinkEmailsMiddleware().process_response(self.req, self.resp)
+        self.assertEqual(len(mail.outbox), 0)
+
+    @override_settings(APPEND_SLASH=False)
+    def test_referer_equal_to_requested_url_without_trailing_slash_when_append_slash_is_unset(self):
+        self.req.path = self.req.path_info = '/regular_url/that/does/not/exist/'
+        self.req.META['HTTP_REFERER'] = self.req.path_info[:-1]
+        BrokenLinkEmailsMiddleware().process_response(self.req, self.resp)
+        self.assertEqual(len(mail.outbox), 1)
+
 
 @override_settings(ROOT_URLCONF='middleware.cond_get_urls')
 class ConditionalGetMiddlewareTest(SimpleTestCase):
@@ -436,6 +480,9 @@ class ConditionalGetMiddlewareTest(SimpleTestCase):
 
     def test_content_length_header_added(self):
         content_length = len(self.resp.content)
+        # Already set by CommonMiddleware, remove it to check that
+        # ConditionalGetMiddleware readds it.
+        del self.resp['Content-Length']
         self.assertNotIn('Content-Length', self.resp)
         self.resp = ConditionalGetMiddleware().process_response(self.req, self.resp)
         self.assertIn('Content-Length', self.resp)
@@ -707,12 +754,11 @@ class GZipMiddlewareTest(SimpleTestCase):
         """
         Compression is performed on FileResponse.
         """
-        open_file = lambda: open(__file__, 'rb')
-        with open_file() as file1:
+        with open(__file__, 'rb') as file1:
             file_resp = FileResponse(file1)
             file_resp['Content-Type'] = 'text/html; charset=UTF-8'
             r = GZipMiddleware().process_response(self.req, file_resp)
-            with open_file() as file2:
+            with open(__file__, 'rb') as file2:
                 self.assertEqual(self.decompress(b''.join(r)), file2.read())
             self.assertEqual(r.get('Content-Encoding'), 'gzip')
             self.assertIsNot(r.file_to_stream, file1)
@@ -768,13 +814,17 @@ class ETagGZipMiddlewareTest(SimpleTestCase):
         ETag is changed after gzip compression is performed.
         """
         request = self.rf.get('/', HTTP_ACCEPT_ENCODING='gzip, deflate')
-        response = GZipMiddleware().process_response(request,
-            CommonMiddleware().process_response(request, HttpResponse(self.compressible_string)))
+        response = GZipMiddleware().process_response(
+            request,
+            CommonMiddleware().process_response(request, HttpResponse(self.compressible_string))
+        )
         gzip_etag = response.get('ETag')
 
         request = self.rf.get('/', HTTP_ACCEPT_ENCODING='')
-        response = GZipMiddleware().process_response(request,
-            CommonMiddleware().process_response(request, HttpResponse(self.compressible_string)))
+        response = GZipMiddleware().process_response(
+            request,
+            CommonMiddleware().process_response(request, HttpResponse(self.compressible_string))
+        )
         nogzip_etag = response.get('ETag')
 
         self.assertNotEqual(gzip_etag, nogzip_etag)

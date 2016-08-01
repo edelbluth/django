@@ -28,7 +28,6 @@ from django.db.migrations.recorder import MigrationRecorder
 from django.test import (
     LiveServerTestCase, SimpleTestCase, TestCase, mock, override_settings,
 )
-from django.test.runner import DiscoverRunner
 from django.utils._os import npath, upath
 from django.utils.encoding import force_text
 from django.utils.six import PY2, PY3, StringIO
@@ -161,9 +160,11 @@ class AdminScriptTestCase(unittest.TestCase):
 
         # Move to the test directory and run
         os.chdir(self.test_dir)
-        out, err = subprocess.Popen([sys.executable, script] + args,
-                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                env=test_environ, universal_newlines=True).communicate()
+        out, err = subprocess.Popen(
+            [sys.executable, script] + args,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            env=test_environ, universal_newlines=True,
+        ).communicate()
         # Move back to the old working directory
         os.chdir(old_cwd)
 
@@ -181,7 +182,7 @@ class AdminScriptTestCase(unittest.TestCase):
                 pass
 
         conf_dir = os.path.dirname(upath(conf.__file__))
-        template_manage_py = os.path.join(conf_dir, 'project_template', 'manage.py')
+        template_manage_py = os.path.join(conf_dir, 'project_template', 'manage.py-tpl')
 
         test_manage_py = os.path.join(self.test_dir, 'manage.py')
         shutil.copyfile(template_manage_py, test_manage_py)
@@ -204,8 +205,10 @@ class AdminScriptTestCase(unittest.TestCase):
         "Utility assertion: assert that the given message exists in the output"
         stream = force_text(stream)
         if regex:
-            self.assertIsNotNone(re.search(msg, stream),
-                "'%s' does not match actual output text '%s'" % (msg, stream))
+            self.assertIsNotNone(
+                re.search(msg, stream),
+                "'%s' does not match actual output text '%s'" % (msg, stream)
+            )
         else:
             self.assertIn(msg, stream, "'%s' does not match actual output text '%s'" % (msg, stream))
 
@@ -1146,9 +1149,11 @@ class ManageCheck(AdminScriptTestCase):
         """ manage.py check reports an error on a non-existent app in
         INSTALLED_APPS """
 
-        self.write_settings('settings.py',
+        self.write_settings(
+            'settings.py',
             apps=['admin_scriptz.broken_app'],
-            sdict={'USE_I18N': False})
+            sdict={'USE_I18N': False},
+        )
         args = ['check']
         out, err = self.run_manage(args)
         self.assertNoOutput(out)
@@ -1192,12 +1197,16 @@ class ManageCheck(AdminScriptTestCase):
         """ manage.py check does not raise errors when an app imports a base
         class that itself has an abstract base. """
 
-        self.write_settings('settings.py',
-            apps=['admin_scripts.app_with_import',
-                  'django.contrib.auth',
-                  'django.contrib.contenttypes',
-                  'django.contrib.sites'],
-            sdict={'DEBUG': True})
+        self.write_settings(
+            'settings.py',
+            apps=[
+                'admin_scripts.app_with_import',
+                'django.contrib.auth',
+                'django.contrib.contenttypes',
+                'django.contrib.sites',
+            ],
+            sdict={'DEBUG': True},
+        )
         args = ['check']
         out, err = self.run_manage(args)
         self.assertNoOutput(err)
@@ -1206,11 +1215,15 @@ class ManageCheck(AdminScriptTestCase):
     def test_output_format(self):
         """ All errors/warnings should be sorted by level and by message. """
 
-        self.write_settings('settings.py',
-            apps=['admin_scripts.app_raising_messages',
-                  'django.contrib.auth',
-                  'django.contrib.contenttypes'],
-            sdict={'DEBUG': True})
+        self.write_settings(
+            'settings.py',
+            apps=[
+                'admin_scripts.app_raising_messages',
+                'django.contrib.auth',
+                'django.contrib.contenttypes',
+            ],
+            sdict={'DEBUG': True},
+        )
         args = ['check']
         out, err = self.run_manage(args)
         expected_err = (
@@ -1239,11 +1252,15 @@ class ManageCheck(AdminScriptTestCase):
         In this test we also test output format.
         """
 
-        self.write_settings('settings.py',
-            apps=['admin_scripts.app_raising_warning',
-                  'django.contrib.auth',
-                  'django.contrib.contenttypes'],
-            sdict={'DEBUG': True})
+        self.write_settings(
+            'settings.py',
+            apps=[
+                'admin_scripts.app_raising_warning',
+                'django.contrib.auth',
+                'django.contrib.contenttypes',
+            ],
+            sdict={'DEBUG': True},
+        )
         args = ['check']
         out, err = self.run_manage(args)
         expected_err = (
@@ -1258,51 +1275,6 @@ class ManageCheck(AdminScriptTestCase):
         self.assertNoOutput(out)
 
 
-class CustomTestRunner(DiscoverRunner):
-
-    def __init__(self, *args, **kwargs):
-        assert 'liveserver' not in kwargs
-        super(CustomTestRunner, self).__init__(*args, **kwargs)
-
-    def run_tests(self, test_labels, extra_tests=None, **kwargs):
-        pass
-
-
-class ManageTestCommand(AdminScriptTestCase):
-    def setUp(self):
-        from django.core.management.commands.test import Command as TestCommand
-        self.cmd = TestCommand()
-
-    def test_liveserver(self):
-        """
-        Ensure that the --liveserver option sets the environment variable
-        correctly.
-        Refs #2879.
-        """
-
-        # Backup original state
-        address_predefined = 'DJANGO_LIVE_TEST_SERVER_ADDRESS' in os.environ
-        old_address = os.environ.get('DJANGO_LIVE_TEST_SERVER_ADDRESS')
-
-        self.cmd.handle(verbosity=0, testrunner='admin_scripts.tests.CustomTestRunner')
-
-        # Original state hasn't changed
-        self.assertEqual('DJANGO_LIVE_TEST_SERVER_ADDRESS' in os.environ, address_predefined)
-        self.assertEqual(os.environ.get('DJANGO_LIVE_TEST_SERVER_ADDRESS'), old_address)
-
-        self.cmd.handle(verbosity=0, testrunner='admin_scripts.tests.CustomTestRunner',
-                        liveserver='blah')
-
-        # Variable was correctly set
-        self.assertEqual(os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'], 'blah')
-
-        # Restore original state
-        if address_predefined:
-            os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS'] = old_address
-        else:
-            del os.environ['DJANGO_LIVE_TEST_SERVER_ADDRESS']
-
-
 class ManageRunserver(AdminScriptTestCase):
     def setUp(self):
         from django.core.management.commands.runserver import Command
@@ -1314,52 +1286,52 @@ class ManageRunserver(AdminScriptTestCase):
         self.cmd = Command(stdout=self.output)
         self.cmd.run = monkey_run
 
-    def assertServerSettings(self, addr, port, ipv6=None, raw_ipv6=False):
+    def assertServerSettings(self, addr, port, ipv6=False, raw_ipv6=False):
         self.assertEqual(self.cmd.addr, addr)
         self.assertEqual(self.cmd.port, port)
         self.assertEqual(self.cmd.use_ipv6, ipv6)
         self.assertEqual(self.cmd._raw_ipv6, raw_ipv6)
 
     def test_runserver_addrport(self):
-        self.cmd.handle()
+        call_command(self.cmd)
         self.assertServerSettings('127.0.0.1', '8000')
 
-        self.cmd.handle(addrport="1.2.3.4:8000")
+        call_command(self.cmd, addrport="1.2.3.4:8000")
         self.assertServerSettings('1.2.3.4', '8000')
 
-        self.cmd.handle(addrport="7000")
+        call_command(self.cmd, addrport="7000")
         self.assertServerSettings('127.0.0.1', '7000')
 
     @unittest.skipUnless(socket.has_ipv6, "platform doesn't support IPv6")
     def test_runner_addrport_ipv6(self):
-        self.cmd.handle(addrport="", use_ipv6=True)
+        call_command(self.cmd, addrport="", use_ipv6=True)
         self.assertServerSettings('::1', '8000', ipv6=True, raw_ipv6=True)
 
-        self.cmd.handle(addrport="7000", use_ipv6=True)
+        call_command(self.cmd, addrport="7000", use_ipv6=True)
         self.assertServerSettings('::1', '7000', ipv6=True, raw_ipv6=True)
 
-        self.cmd.handle(addrport="[2001:0db8:1234:5678::9]:7000")
+        call_command(self.cmd, addrport="[2001:0db8:1234:5678::9]:7000")
         self.assertServerSettings('2001:0db8:1234:5678::9', '7000', ipv6=True, raw_ipv6=True)
 
     def test_runner_hostname(self):
-        self.cmd.handle(addrport="localhost:8000")
+        call_command(self.cmd, addrport="localhost:8000")
         self.assertServerSettings('localhost', '8000')
 
-        self.cmd.handle(addrport="test.domain.local:7000")
+        call_command(self.cmd, addrport="test.domain.local:7000")
         self.assertServerSettings('test.domain.local', '7000')
 
     @unittest.skipUnless(socket.has_ipv6, "platform doesn't support IPv6")
     def test_runner_hostname_ipv6(self):
-        self.cmd.handle(addrport="test.domain.local:7000", use_ipv6=True)
+        call_command(self.cmd, addrport="test.domain.local:7000", use_ipv6=True)
         self.assertServerSettings('test.domain.local', '7000', ipv6=True)
 
     def test_runner_ambiguous(self):
         # Only 4 characters, all of which could be in an ipv6 address
-        self.cmd.handle(addrport="beef:7654")
+        call_command(self.cmd, addrport="beef:7654")
         self.assertServerSettings('beef', '7654')
 
         # Uses only characters that could be in an ipv6 address
-        self.cmd.handle(addrport="deadbeef:7654")
+        call_command(self.cmd, addrport="deadbeef:7654")
         self.assertServerSettings('deadbeef', '7654')
 
     def test_no_database(self):
@@ -1367,7 +1339,7 @@ class ManageRunserver(AdminScriptTestCase):
         Ensure runserver.check_migrations doesn't choke on empty DATABASES.
         """
         tested_connections = ConnectionHandler({})
-        with mock.patch('django.core.management.commands.runserver.connections', new=tested_connections):
+        with mock.patch('django.core.management.base.connections', new=tested_connections):
             self.cmd.check_migrations()
 
     def test_readonly_database(self):
@@ -1535,7 +1507,7 @@ class CommandTypes(AdminScriptTestCase):
         out = StringIO()
         err = StringIO()
         command = Command(stdout=out, stderr=err)
-        command.execute()
+        call_command(command)
         if color.supports_color():
             self.assertIn('Hello, world!\n', out.getvalue())
             self.assertIn('Hello, world!\n', err.getvalue())
@@ -1557,14 +1529,14 @@ class CommandTypes(AdminScriptTestCase):
         out = StringIO()
         err = StringIO()
         command = Command(stdout=out, stderr=err, no_color=True)
-        command.execute()
+        call_command(command)
         self.assertEqual(out.getvalue(), 'Hello, world!\n')
         self.assertEqual(err.getvalue(), 'Hello, world!\n')
 
         out = StringIO()
         err = StringIO()
         command = Command(stdout=out, stderr=err)
-        command.execute(no_color=True)
+        call_command(command, no_color=True)
         self.assertEqual(out.getvalue(), 'Hello, world!\n')
         self.assertEqual(err.getvalue(), 'Hello, world!\n')
 
@@ -1577,11 +1549,11 @@ class CommandTypes(AdminScriptTestCase):
 
         out = StringIO()
         command = Command(stdout=out)
-        command.execute()
+        call_command(command)
         self.assertEqual(out.getvalue(), "Hello, World!\n")
         out.truncate(0)
         new_out = StringIO()
-        command.execute(stdout=new_out)
+        call_command(command, stdout=new_out)
         self.assertEqual(out.getvalue(), "")
         self.assertEqual(new_out.getvalue(), "Hello, World!\n")
 
@@ -1594,11 +1566,11 @@ class CommandTypes(AdminScriptTestCase):
 
         err = StringIO()
         command = Command(stderr=err)
-        command.execute()
+        call_command(command)
         self.assertEqual(err.getvalue(), "Hello, World!\n")
         err.truncate(0)
         new_err = StringIO()
-        command.execute(stderr=new_err)
+        call_command(command, stderr=new_err)
         self.assertEqual(err.getvalue(), "")
         self.assertEqual(new_err.getvalue(), "Hello, World!\n")
 
@@ -2054,8 +2026,7 @@ class StartProject(LiveServerTestCase, AdminScriptTestCase):
         for f in ('Procfile', 'additional_file.py', 'requirements.txt'):
             self.assertTrue(os.path.exists(os.path.join(base_path, f)))
             with open(os.path.join(base_path, f)) as fh:
-                self.assertEqual(fh.read().strip(),
-                    '# some file for customtestproject test project')
+                self.assertEqual(fh.read().strip(), '# some file for customtestproject test project')
 
     def test_custom_project_template_context_variables(self):
         "Make sure template context variables are rendered with proper values"

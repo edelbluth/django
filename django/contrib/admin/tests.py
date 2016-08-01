@@ -1,23 +1,19 @@
-import os
-from unittest import SkipTest
-
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
 from django.test import modify_settings
-from django.utils.module_loading import import_string
+from django.test.selenium import SeleniumTestCase
+from django.utils.deprecation import MiddlewareMixin
 from django.utils.translation import ugettext as _
 
 
-class CSPMiddleware(object):
+class CSPMiddleware(MiddlewareMixin):
     """The admin's JavaScript should be compatible with CSP."""
     def process_response(self, request, response):
         response['Content-Security-Policy'] = "default-src 'self'"
         return response
 
 
-@modify_settings(
-    MIDDLEWARE_CLASSES={'append': 'django.contrib.admin.tests.CSPMiddleware'},
-)
-class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
+@modify_settings(MIDDLEWARE={'append': 'django.contrib.admin.tests.CSPMiddleware'})
+class AdminSeleniumTestCase(SeleniumTestCase, StaticLiveServerTestCase):
 
     available_apps = [
         'django.contrib.admin',
@@ -26,26 +22,6 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
         'django.contrib.sessions',
         'django.contrib.sites',
     ]
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
-
-    @classmethod
-    def setUpClass(cls):
-        if not os.environ.get('DJANGO_SELENIUM_TESTS', False):
-            raise SkipTest('Selenium tests not requested')
-        try:
-            cls.selenium = import_string(cls.webdriver_class)()
-        except Exception as e:
-            raise SkipTest('Selenium webdriver "%s" not installed or not '
-                           'operational: %s' % (cls.webdriver_class, str(e)))
-        cls.selenium.implicitly_wait(10)
-        # This has to be last to ensure that resources are cleaned up properly!
-        super(AdminSeleniumWebDriverTestCase, cls).setUpClass()
-
-    @classmethod
-    def _tearDownClassInternal(cls):
-        if hasattr(cls, 'selenium'):
-            cls.selenium.quit()
-        super(AdminSeleniumWebDriverTestCase, cls)._tearDownClassInternal()
 
     def wait_until(self, callback, timeout=10):
         """
@@ -170,16 +146,35 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
                 return option
         raise NoSuchElementException('Option "%s" not found in "%s"' % (value, selector))
 
+    def _assertOptionsValues(self, options_selector, values):
+        if values:
+            options = self.selenium.find_elements_by_css_selector(options_selector)
+            actual_values = []
+            for option in options:
+                actual_values.append(option.get_attribute('value'))
+            self.assertEqual(values, actual_values)
+        else:
+            # Prevent the `find_elements_by_css_selector` call from blocking
+            # if the selector doesn't match any options as we expect it
+            # to be the case.
+            with self.disable_implicit_wait():
+                self.wait_until(
+                    lambda driver: len(driver.find_elements_by_css_selector(options_selector)) == 0
+                )
+
     def assertSelectOptions(self, selector, values):
         """
         Asserts that the <SELECT> widget identified by `selector` has the
         options with the given `values`.
         """
-        options = self.selenium.find_elements_by_css_selector('%s > option' % selector)
-        actual_values = []
-        for option in options:
-            actual_values.append(option.get_attribute('value'))
-        self.assertEqual(values, actual_values)
+        self._assertOptionsValues("%s > option" % selector, values)
+
+    def assertSelectedOptions(self, selector, values):
+        """
+        Asserts that the <SELECT> widget identified by `selector` has the
+        selected options with the given `values`.
+        """
+        self._assertOptionsValues("%s > option:checked" % selector, values)
 
     def has_css_class(self, selector, klass):
         """

@@ -124,14 +124,12 @@ class SerializersTestBase(object):
 
     def test_serialize(self):
         """Tests that basic serialization works."""
-        serial_str = serializers.serialize(self.serializer_name,
-                                           Article.objects.all())
+        serial_str = serializers.serialize(self.serializer_name, Article.objects.all())
         self.assertTrue(self._validate_output(serial_str))
 
     def test_serializer_roundtrip(self):
         """Tests that serialized content can be deserialized."""
-        serial_str = serializers.serialize(self.serializer_name,
-                                           Article.objects.all())
+        serial_str = serializers.serialize(self.serializer_name, Article.objects.all())
         models = list(serializers.deserialize(self.serializer_name, serial_str))
         self.assertEqual(len(models), 2)
 
@@ -174,8 +172,7 @@ class SerializersTestBase(object):
         """
         old_headline = "Poker has no place on ESPN"
         new_headline = "Poker has no place on television"
-        serial_str = serializers.serialize(self.serializer_name,
-                                           Article.objects.all())
+        serial_str = serializers.serialize(self.serializer_name, Article.objects.all())
         serial_str = serial_str.replace(old_headline, new_headline)
         models = list(serializers.deserialize(self.serializer_name, serial_str))
 
@@ -196,11 +193,8 @@ class SerializersTestBase(object):
         (such as a OneToOneField), it doesn't appear in the
         serialized field list - it replaces the pk identifier.
         """
-        profile = AuthorProfile(author=self.joe,
-                                date_of_birth=datetime(1970, 1, 1))
-        profile.save()
-        serial_str = serializers.serialize(self.serializer_name,
-                                           AuthorProfile.objects.all())
+        AuthorProfile.objects.create(author=self.joe, date_of_birth=datetime(1970, 1, 1))
+        serial_str = serializers.serialize(self.serializer_name, AuthorProfile.objects.all())
         self.assertFalse(self._get_field_values(serial_str, 'author'))
 
         for obj in serializers.deserialize(self.serializer_name, serial_str):
@@ -210,9 +204,7 @@ class SerializersTestBase(object):
         """Tests that output can be restricted to a subset of fields"""
         valid_fields = ('headline', 'pub_date')
         invalid_fields = ("author", "categories")
-        serial_str = serializers.serialize(self.serializer_name,
-                                    Article.objects.all(),
-                                    fields=valid_fields)
+        serial_str = serializers.serialize(self.serializer_name, Article.objects.all(), fields=valid_fields)
         for field_name in invalid_fields:
             self.assertFalse(self._get_field_values(serial_str, field_name))
 
@@ -269,17 +261,15 @@ class SerializersTestBase(object):
         pk_value = self._get_pk_values(serial_str)[0]
         self.assertFalse(pk_value)
 
-        cat_obj = list(serializers.deserialize(self.serializer_name,
-                                               serial_str))[0].object
-        self.assertEqual(cat_obj.id, None)
+        cat_obj = list(serializers.deserialize(self.serializer_name, serial_str))[0].object
+        self.assertIsNone(cat_obj.id)
 
     def test_float_serialization(self):
         """Tests that float values serialize and deserialize intact"""
         sc = Score(score=3.4)
         sc.save()
         serial_str = serializers.serialize(self.serializer_name, [sc])
-        deserial_objs = list(serializers.deserialize(self.serializer_name,
-                                                serial_str))
+        deserial_objs = list(serializers.deserialize(self.serializer_name, serial_str))
         self.assertEqual(deserial_objs[0].object.score, Approximate(3.4, places=1))
 
     def test_deferred_field_serialization(self):
@@ -299,15 +289,13 @@ class SerializersTestBase(object):
         player.rank = 1
         player.team = Team(team_str)
         player.save()
-        serial_str = serializers.serialize(self.serializer_name,
-                                           Player.objects.all())
+        serial_str = serializers.serialize(self.serializer_name, Player.objects.all())
         team = self._get_field_values(serial_str, "team")
         self.assertTrue(team)
         self.assertEqual(team[0], team_str)
 
         deserial_objs = list(serializers.deserialize(self.serializer_name, serial_str))
-        self.assertEqual(deserial_objs[0].object.team.to_string(),
-                         player.team.to_string())
+        self.assertEqual(deserial_objs[0].object.team.to_string(), player.team.to_string())
 
     def test_pre_1000ad_date(self):
         """Tests that year values before 1000AD are properly formatted"""
@@ -327,8 +315,7 @@ class SerializersTestBase(object):
         Tests that serialized strings without PKs
         can be turned into models
         """
-        deserial_objs = list(serializers.deserialize(self.serializer_name,
-                                                     self.pkless_str))
+        deserial_objs = list(serializers.deserialize(self.serializer_name, self.pkless_str))
         for obj in deserial_objs:
             self.assertFalse(obj.object.id)
             obj.save()
@@ -366,6 +353,29 @@ class SerializersTestBase(object):
         self.assertEqual(base_data, proxy_proxy_data.replace('proxy', ''))
 
 
+class SerializerAPITests(SimpleTestCase):
+
+    def test_stream_class(self):
+        class File(object):
+            def __init__(self):
+                self.lines = []
+
+            def write(self, line):
+                self.lines.append(line)
+
+            def getvalue(self):
+                return ''.join(self.lines)
+
+        class Serializer(serializers.json.Serializer):
+            stream_class = File
+
+        serializer = Serializer()
+        data = serializer.serialize([Score(id=1, score=3.4)])
+        self.assertIs(serializer.stream_class, File)
+        self.assertIsInstance(serializer.stream, File)
+        self.assertEqual(data, '[{"model": "serializers.score", "pk": 1, "fields": {"score": 3.4}}]')
+
+
 class SerializersTransactionTestBase(object):
 
     available_apps = ['serializers']
@@ -398,9 +408,9 @@ def register_tests(test_class, method_name, test_func, exclude=None):
     """
     formats = [
         f for f in serializers.get_serializer_formats()
-        if (not isinstance(serializers.get_serializer(f), serializers.BadSerializer)
-            and not f == 'geojson'
-            and (exclude is None or f not in exclude))
+        if (not isinstance(serializers.get_serializer(f), serializers.BadSerializer) and
+            f != 'geojson' and
+            (exclude is None or f not in exclude))
     ]
     for format_ in formats:
         setattr(test_class, method_name % format_, curry(test_func, format_))

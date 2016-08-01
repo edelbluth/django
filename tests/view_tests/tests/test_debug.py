@@ -22,7 +22,8 @@ from django.utils import six
 from django.utils.encoding import force_bytes, force_text
 from django.utils.functional import SimpleLazyObject
 from django.views.debug import (
-    CallableSettingWrapper, ExceptionReporter, technical_500_response,
+    CLEANSED_SUBSTITUTE, CallableSettingWrapper, ExceptionReporter,
+    cleanse_setting, technical_500_response,
 )
 
 from .. import BrokenException, except_args
@@ -56,7 +57,7 @@ class CallableSettingWrapperTests(SimpleTestCase):
         self.assertEqual(actual, "repr from the wrapped callable")
 
 
-@override_settings(DEBUG=True, ROOT_URLCONF="view_tests.urls")
+@override_settings(DEBUG=True, ROOT_URLCONF='view_tests.urls')
 class DebugViewTests(LoggingCaptureMixin, SimpleTestCase):
 
     def test_files(self):
@@ -124,8 +125,8 @@ class DebugViewTests(LoggingCaptureMixin, SimpleTestCase):
 
     def test_view_exceptions(self):
         for n in range(len(except_args)):
-            self.assertRaises(BrokenException, self.client.get,
-                reverse('view_exception', args=(n,)))
+            with self.assertRaises(BrokenException):
+                self.client.get(reverse('view_exception', args=(n,)))
 
     def test_non_l10ned_numeric_ids(self):
         """
@@ -139,8 +140,10 @@ class DebugViewTests(LoggingCaptureMixin, SimpleTestCase):
             match = re.search(b'<div class="context" id="(?P<id>[^"]+)">', response.content)
             self.assertIsNotNone(match)
             id_repr = match.group('id')
-            self.assertFalse(re.search(b'[^c0-9]', id_repr),
-                             "Numeric IDs in debug response HTML page shouldn't be localized (value: %s)." % id_repr)
+            self.assertFalse(
+                re.search(b'[^c0-9]', id_repr),
+                "Numeric IDs in debug response HTML page shouldn't be localized (value: %s)." % id_repr
+            )
 
     def test_template_exceptions(self):
         for n in range(len(except_args)):
@@ -148,9 +151,11 @@ class DebugViewTests(LoggingCaptureMixin, SimpleTestCase):
                 self.client.get(reverse('template_exception', args=(n,)))
             except Exception:
                 raising_loc = inspect.trace()[-1][-2][0].strip()
-                self.assertNotEqual(raising_loc.find('raise BrokenException'), -1,
-                    "Failed to find 'raise BrokenException' in last frame of traceback, instead found: %s" %
-                        raising_loc)
+                self.assertNotEqual(
+                    raising_loc.find('raise BrokenException'), -1,
+                    "Failed to find 'raise BrokenException' in last frame of "
+                    "traceback, instead found: %s" % raising_loc
+                )
 
     def test_template_loader_postmortem(self):
         """Tests for not existing file"""
@@ -164,12 +169,21 @@ class DebugViewTests(LoggingCaptureMixin, SimpleTestCase):
             }]):
                 response = self.client.get(reverse('raises_template_does_not_exist', kwargs={"path": template_name}))
             self.assertContains(response, "%s (Source does not exist)" % template_path, status_code=500, count=2)
+            # Assert as HTML.
+            self.assertContains(
+                response,
+                '<li><code>django.template.loaders.filesystem.Loader</code>: '
+                '%s (Source does not exist)</li>' % os.path.join(tempdir, 'notfound.html'),
+                status_code=500,
+                html=True,
+            )
 
     def test_no_template_source_loaders(self):
         """
         Make sure if you don't specify a template, the debug view doesn't blow up.
         """
-        self.assertRaises(TemplateDoesNotExist, self.client.get, '/render_no_template/')
+        with self.assertRaises(TemplateDoesNotExist):
+            self.client.get('/render_no_template/')
 
     @override_settings(ROOT_URLCONF='view_tests.default_urls')
     def test_default_urlconf_template(self):
@@ -224,7 +238,7 @@ class DebugViewQueriesAllowedTests(SimpleTestCase):
 
 @override_settings(
     DEBUG=True,
-    ROOT_URLCONF="view_tests.urls",
+    ROOT_URLCONF='view_tests.urls',
     # No template directories are configured, so no templates will be found.
     TEMPLATES=[{
         'BACKEND': 'django.template.backends.dummy.TemplateStrings',
@@ -436,15 +450,9 @@ class ExceptionReporterTests(SimpleTestCase):
         except BrokenEvaluation:
             exc_type, exc_value, tb = sys.exc_info()
 
-        reporter = ExceptionReporter(request, exc_type, exc_value, tb)
-        try:
-            html = reporter.get_traceback_html()
-        except BrokenEvaluation:
-            self.fail("Broken evaluation in traceback is not caught.")
-
         self.assertIn(
             "BrokenEvaluation",
-            html,
+            ExceptionReporter(request, exc_type, exc_value, tb).get_traceback_html(),
             "Evaluation exception reason not mentioned in traceback"
         )
 
@@ -937,9 +945,22 @@ class AjaxResponseExceptionReporterFilter(ExceptionReportTestMixin, LoggingCaptu
         the request to bypass the one set in DEFAULT_EXCEPTION_REPORTER_FILTER.
         """
         with self.settings(DEBUG=True):
-            self.verify_unsafe_response(custom_exception_reporter_filter_view,
-                check_for_vars=False)
+            self.verify_unsafe_response(custom_exception_reporter_filter_view, check_for_vars=False)
 
         with self.settings(DEBUG=False):
-            self.verify_unsafe_response(custom_exception_reporter_filter_view,
-                check_for_vars=False)
+            self.verify_unsafe_response(custom_exception_reporter_filter_view, check_for_vars=False)
+
+
+class HelperFunctionTests(SimpleTestCase):
+
+    def test_cleanse_setting_basic(self):
+        self.assertEqual(cleanse_setting('TEST', 'TEST'), 'TEST')
+        self.assertEqual(cleanse_setting('PASSWORD', 'super_secret'), CLEANSED_SUBSTITUTE)
+
+    def test_cleanse_setting_ignore_case(self):
+        self.assertEqual(cleanse_setting('password', 'super_secret'), CLEANSED_SUBSTITUTE)
+
+    def test_cleanse_setting_recurses_in_dictionary(self):
+        initial = {'login': 'cooper', 'password': 'secret'}
+        expected = {'login': 'cooper', 'password': CLEANSED_SUBSTITUTE}
+        self.assertEqual(cleanse_setting('SETTING_NAME', initial), expected)

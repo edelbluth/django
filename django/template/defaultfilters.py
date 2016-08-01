@@ -3,13 +3,15 @@ from __future__ import unicode_literals
 
 import random as random_module
 import re
+import warnings
 from decimal import ROUND_HALF_UP, Context, Decimal, InvalidOperation
 from functools import wraps
+from operator import itemgetter
 from pprint import pformat
 
-from django.conf import settings
 from django.utils import formats, six
 from django.utils.dateformat import format, time_format
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text, iri_to_uri
 from django.utils.html import (
     avoid_wrapping, conditional_escape, escape, escapejs, linebreaks,
@@ -168,8 +170,7 @@ def floatformat(text, arg=-1):
 
         # Avoid conversion to scientific notation by accessing `sign`, `digits`
         # and `exponent` from `Decimal.as_tuple()` directly.
-        sign, digits, exponent = d.quantize(exp, ROUND_HALF_UP,
-            Context(prec=prec)).as_tuple()
+        sign, digits, exponent = d.quantize(exp, ROUND_HALF_UP, Context(prec=prec)).as_tuple()
         digits = [six.text_type(digit) for digit in reversed(digits)]
         while len(digits) <= abs(exponent):
             digits.append('0')
@@ -244,8 +245,8 @@ def stringformat(value, arg):
     This specifier uses Python string formating syntax, with the exception that
     the leading "%" is dropped.
 
-    See http://docs.python.org/lib/typesseq-strings.html for documentation
-    of Python string formatting
+    See https://docs.python.org/3/library/stdtypes.html#printf-style-string-formatting
+    for documentation of Python string formatting.
     """
     try:
         return ("%" + six.text_type(arg)) % value
@@ -367,8 +368,7 @@ def urlizetrunc(value, limit, autoescape=True):
 
     Argument: Length to truncate URLs to.
     """
-    return mark_safe(_urlize(value, trim_url_limit=int(limit), nofollow=True,
-                            autoescape=autoescape))
+    return mark_safe(_urlize(value, trim_url_limit=int(limit), nofollow=True, autoescape=autoescape))
 
 
 @register.filter(is_safe=False)
@@ -441,7 +441,11 @@ def escape_filter(value):
     """
     Marks the value as a string that should be auto-escaped.
     """
-    return mark_for_escaping(value)
+    with warnings.catch_warnings():
+        # Ignore mark_for_escaping deprecation -- this will use
+        # conditional_escape() in Django 2.0.
+        warnings.simplefilter('ignore', category=RemovedInDjango20Warning)
+        return mark_for_escaping(value)
 
 
 @register.filter(is_safe=True)
@@ -511,6 +515,32 @@ def striptags(value):
 # LISTS           #
 ###################
 
+def _property_resolver(arg):
+    """
+    When arg is convertible to float, behave like operator.itemgetter(arg)
+    Otherwise, behave like Variable(arg).resolve
+
+    >>> _property_resolver(1)('abc')
+    'b'
+    >>> _property_resolver('1')('abc')
+    Traceback (most recent call last):
+    ...
+    TypeError: string indices must be integers
+    >>> class Foo:
+    ...     a = 42
+    ...     b = 3.14
+    ...     c = 'Hey!'
+    >>> _property_resolver('b')(Foo())
+    3.14
+    """
+    try:
+        float(arg)
+    except ValueError:
+        return Variable(arg).resolve
+    else:
+        return itemgetter(arg)
+
+
 @register.filter(is_safe=False)
 def dictsort(value, arg):
     """
@@ -518,7 +548,7 @@ def dictsort(value, arg):
     the argument.
     """
     try:
-        return sorted(value, key=Variable(arg).resolve)
+        return sorted(value, key=_property_resolver(arg))
     except (TypeError, VariableDoesNotExist):
         return ''
 
@@ -530,7 +560,7 @@ def dictsortreversed(value, arg):
     property given in the argument.
     """
     try:
-        return sorted(value, key=Variable(arg).resolve, reverse=True)
+        return sorted(value, key=_property_resolver(arg), reverse=True)
     except (TypeError, VariableDoesNotExist):
         return ''
 
@@ -639,7 +669,8 @@ def unordered_list(value, autoescape=True):
     if autoescape:
         escaper = conditional_escape
     else:
-        escaper = lambda x: x
+        def escaper(x):
+            return x
 
     def walk_items(item_list):
         item_iterator = iter(item_list)
@@ -726,8 +757,6 @@ def date(value, arg=None):
     """Formats a date according to the given format."""
     if value in (None, ''):
         return ''
-    if arg is None:
-        arg = settings.DATE_FORMAT
     try:
         return formats.date_format(value, arg)
     except AttributeError:
@@ -742,14 +771,12 @@ def time(value, arg=None):
     """Formats a time according to the given format."""
     if value in (None, ''):
         return ''
-    if arg is None:
-        arg = settings.TIME_FORMAT
     try:
         return formats.time_format(value, arg)
-    except AttributeError:
+    except (AttributeError, TypeError):
         try:
             return time_format(value, arg)
-        except AttributeError:
+        except (AttributeError, TypeError):
             return ''
 
 
@@ -850,7 +877,8 @@ def filesizeformat(bytes_):
         value = ungettext("%(size)d byte", "%(size)d bytes", 0) % {'size': 0}
         return avoid_wrapping(value)
 
-    filesize_number_format = lambda value: formats.number_format(round(value, 1), 1)
+    def filesize_number_format(value):
+        return formats.number_format(round(value, 1), 1)
 
     KB = 1 << 10
     MB = 1 << 20
